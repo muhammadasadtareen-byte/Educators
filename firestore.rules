@@ -237,7 +237,7 @@ service cloud.firestore {
       allow delete: if isSignedIn() && isValidId(campusId) && existing().ownerId == request.auth.uid;
 
       match /staff/{staffId} {
-        allow get: if isValidId(staffId) && isCampusMember(existing());
+        allow get: if isValidId(staffId) && (isCampusAdmin(campusId) || (resource != null && isCampusMember(existing())));
         allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
         allow create: if isSignedIn() && isValidId(staffId) &&
           incoming().keys().hasAll(['ownerId', 'memberUids', 'userUid', 'email', 'displayName', 'role', 'assignedClassIds', 'active', 'createdAt', 'updatedAt']) &&

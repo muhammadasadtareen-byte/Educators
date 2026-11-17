@@ -118,13 +118,13 @@ class SchoolRepository(
             val examFinalId = "exam_final"
             val examAnnualId = "exam_annual"
 
-            val batch = db.batch()
             val cRef = campusDoc(campusId)
             path = cRef.path
             val members = listOf(uid)
 
-            batch.set(
-                cRef,
+            // Create the parent campus document first so subcollection security rules
+            // (isCampusAdmin -> get(/campuses/{campusId})) can read it before batch commit.
+            cRef.set(
                 mapOf(
                     "ownerId" to uid,
                     "memberUids" to members,
@@ -136,7 +136,9 @@ class SchoolRepository(
                     "createdAt" to FieldValue.serverTimestamp(),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
-            )
+            ).await()
+
+            val batch = db.batch()
 
             // Owner Staff record (ADMIN)
             batch.set(
@@ -213,17 +215,29 @@ class SchoolRepository(
             }
 
             // User profile
-            batch.set(
-                userRef,
-                mapOf(
-                    "userId" to uid,
-                    "email" to email.take(120),
-                    "displayName" to displayName.take(100),
-                    "activeCampusId" to campusId,
-                    "createdAt" to FieldValue.serverTimestamp(),
-                    "updatedAt" to FieldValue.serverTimestamp()
+            if (userSnap.exists()) {
+                batch.update(
+                    userRef,
+                    mapOf(
+                        "email" to email.take(120),
+                        "displayName" to displayName.take(100),
+                        "activeCampusId" to campusId,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
                 )
-            )
+            } else {
+                batch.set(
+                    userRef,
+                    mapOf(
+                        "userId" to uid,
+                        "email" to email.take(120),
+                        "displayName" to displayName.take(100),
+                        "activeCampusId" to campusId,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+            }
 
             batch.commit().await()
             Result.success(campusId)

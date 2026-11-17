@@ -151,7 +151,7 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
                     Text(
                         text = "Smart Result Management System",
                         style = MaterialTheme.typography.headlineSmall,
-                        color = EducatorsNavy,
+                        color = MaterialTheme.colorScheme.primary,
                         textAlign = TextAlign.Center
                     )
                     Spacer(Modifier.height(8.dp))
@@ -222,7 +222,10 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
                             )
                         },
                         enabled = !isLoading && !isAutoSigningIn,
-                        colors = ButtonDefaults.buttonColors(containerColor = EducatorsNavy),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = EducatorsNavy,
+                            contentColor = Color.White
+                        ),
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
                             .fillMaxWidth()
