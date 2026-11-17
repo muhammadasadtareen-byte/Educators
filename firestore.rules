@@ -1,0 +1,416 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidMemberList(list) {
+      return list is list && list.size() >= 1 && list.size() <= 50 && (list[0] is string);
+    }
+
+    function isCampusMember(data) {
+      return isSignedIn() && (data.ownerId == request.auth.uid || request.auth.uid in data.memberUids);
+    }
+
+    function isCampusAdmin(campusId) {
+      return isSignedIn() && (
+        get(/databases/$(database)/documents/campuses/$(campusId)).data.ownerId == request.auth.uid ||
+        (
+          exists(/databases/$(database)/documents/campuses/$(campusId)/staff/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/campuses/$(campusId)/staff/$(request.auth.uid)).data.role == 'ADMIN' &&
+          get(/databases/$(database)/documents/campuses/$(campusId)/staff/$(request.auth.uid)).data.active == true
+        )
+      );
+    }
+
+    function isCampusTeacherForClass(campusId, classId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/campuses/$(campusId)/staff/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/campuses/$(campusId)/staff/$(request.auth.uid)).data.active == true &&
+        get(/databases/$(database)/documents/campuses/$(campusId)/staff/$(request.auth.uid)).data.role == 'TEACHER' &&
+        classId in get(/databases/$(database)/documents/campuses/$(campusId)/staff/$(request.auth.uid)).data.assignedClassIds;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.userId is string && data.userId == userId &&
+        data.email is string && data.email.size() <= 120 &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+        isValidId(data.activeCampusId) &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCampus(data) {
+      return isValidId(data.ownerId) &&
+        isValidMemberList(data.memberUids) &&
+        data.ownerId in data.memberUids &&
+        data.schoolName is string && data.schoolName.size() >= 1 && data.schoolName.size() <= 120 &&
+        data.campusName is string && data.campusName.size() >= 1 && data.campusName.size() <= 120 &&
+        (!('logoBase64' in data) || (data.logoBase64 is string && data.logoBase64.size() <= 300000)) &&
+        data.activeSessionId is string && data.activeSessionId.size() <= 128 &&
+        data.activeExamId is string && data.activeExamId.size() <= 128 &&
+        data.allowDecimalMarks is bool &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidStaffMember(data) {
+      return isValidId(data.ownerId) &&
+        isValidMemberList(data.memberUids) &&
+        isValidId(data.userUid) &&
+        data.email is string && data.email.size() <= 120 &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+        data.role in ['ADMIN', 'TEACHER'] &&
+        data.assignedClassIds is list && data.assignedClassIds.size() <= 30 &&
+        (data.assignedClassIds.size() == 0 || data.assignedClassIds[0] is string) &&
+        data.active is bool &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidSession(data) {
+      return isValidId(data.ownerId) &&
+        isValidMemberList(data.memberUids) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 50 &&
+        data.current is bool &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidExamination(data) {
+      return isValidId(data.ownerId) &&
+        isValidMemberList(data.memberUids) &&
+        isValidId(data.sessionId) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+        data.examType in ['MONTHLY_TEST', 'MIDTERM', 'FINAL_TERM', 'ANNUAL', 'CUSTOM'] &&
+        data.useCustomGrading is bool &&
+        data.sortOrder is int && data.sortOrder >= 0 && data.sortOrder <= 1000 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidSchoolClass(data) {
+      return isValidId(data.ownerId) &&
+        isValidMemberList(data.memberUids) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 50 &&
+        data.sortOrder is int && data.sortOrder >= 0 && data.sortOrder <= 100 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidClassSection(data) {
+      return isValidId(data.ownerId) &&
+        isValidMemberList(data.memberUids) &&
+        isValidId(data.classId) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 30 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidSubject(data) {
+      return isValidId(data.ownerId) &&
+        isValidMemberList(data.memberUids) &&
+        isValidId(data.classId) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+        data.maxMarks is number && data.maxMarks > 0 && data.maxMarks <= 1000 &&
+        data.passingMarks is number && data.passingMarks >= 0 && data.passingMarks <= data.maxMarks &&
+        data.compulsory is bool &&
+        data.sortOrder is int && data.sortOrder >= 0 && data.sortOrder <= 200 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidStudent(data) {
+      return isValidId(data.ownerId) &&
+        isValidMemberList(data.memberUids) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        data.fatherName is string && data.fatherName.size() >= 1 && data.fatherName.size() <= 100 &&
+        data.rollNumber is string && data.rollNumber.size() >= 1 && data.rollNumber.size() <= 30 &&
+        data.admissionNumber is string && data.admissionNumber.size() >= 1 && data.admissionNumber.size() <= 40 &&
+        isValidId(data.classId) &&
+        isValidId(data.sectionId) &&
+        isValidId(data.sessionId) &&
+        (!('photoBase64' in data) || (data.photoBase64 is string && data.photoBase64.size() <= 300000)) &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidMarkEntry(data) {
+      return isValidId(data.ownerId) &&
+        isValidMemberList(data.memberUids) &&
+        isValidId(data.sessionId) &&
+        isValidId(data.examId) &&
+        isValidId(data.classId) &&
+        isValidId(data.sectionId) &&
+        isValidId(data.studentId) &&
+        isValidId(data.subjectId) &&
+        data.obtainedMarks is number && data.obtainedMarks >= 0 && data.obtainedMarks <= 1000 &&
+        isValidId(data.enteredByUid) &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidGradingRule(data) {
+      return isValidId(data.ownerId) &&
+        isValidMemberList(data.memberUids) &&
+        isValidId(data.examId) &&
+        data.minPercentage is number && data.minPercentage >= 0 && data.minPercentage <= 100 &&
+        data.maxPercentage is number && data.maxPercentage >= data.minPercentage && data.maxPercentage <= 100 &&
+        data.grade is string && data.grade.size() >= 1 && data.grade.size() <= 10 &&
+        data.remarks is string && data.remarks.size() >= 1 && data.remarks.size() <= 60 &&
+        data.passing is bool &&
+        data.sortOrder is int && data.sortOrder >= 0 && data.sortOrder <= 100 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidResultRecord(data) {
+      return isValidId(data.ownerId) &&
+        isValidMemberList(data.memberUids) &&
+        isValidId(data.sessionId) &&
+        isValidId(data.examId) &&
+        isValidId(data.classId) &&
+        isValidId(data.sectionId) &&
+        isValidId(data.studentId) &&
+        data.totalMaxMarks is number && data.totalMaxMarks >= 0 &&
+        data.totalObtainedMarks is number && data.totalObtainedMarks >= 0 &&
+        data.percentage is number && data.percentage >= 0 && data.percentage <= 100 &&
+        data.grade is string && data.grade.size() >= 1 && data.grade.size() <= 20 &&
+        data.passed is bool &&
+        data.status in ['COMPLETE', 'INCOMPLETE'] &&
+        data.position is int && data.position >= 0 && data.position <= 10000 &&
+        (!('teacherRemarks' in data) || (data.teacherRemarks is string && data.teacherRemarks.size() <= 300)) &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidId(userId) &&
+        incoming().keys().hasAll(['userId', 'email', 'displayName', 'activeCampusId', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'email', 'displayName', 'activeCampusId', 'createdAt', 'updatedAt']) &&
+        isValidUserProfile(incoming(), userId);
+      allow update: if isOwner(userId) && isValidId(userId) &&
+        isValidUserProfile(incoming(), userId) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'activeCampusId', 'updatedAt']);
+      allow delete: if isOwner(userId) && isValidId(userId);
+    }
+
+    match /campuses/{campusId} {
+      allow get: if isValidId(campusId) && isCampusMember(existing());
+      allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+      allow create: if isSignedIn() && isValidId(campusId) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().keys().hasAll(['ownerId', 'memberUids', 'schoolName', 'campusName', 'activeSessionId', 'activeExamId', 'allowDecimalMarks', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['ownerId', 'memberUids', 'schoolName', 'campusName', 'logoBase64', 'activeSessionId', 'activeExamId', 'allowDecimalMarks', 'createdAt', 'updatedAt']) &&
+        isValidCampus(incoming());
+      allow update: if isValidId(campusId) &&
+        isValidCampus(incoming()) &&
+        isCampusAdmin(campusId) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'schoolName', 'campusName', 'logoBase64', 'activeSessionId', 'activeExamId', 'allowDecimalMarks', 'updatedAt']);
+      allow delete: if isSignedIn() && isValidId(campusId) && existing().ownerId == request.auth.uid;
+
+      match /staff/{staffId} {
+        allow get: if isValidId(staffId) && isCampusMember(existing());
+        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow create: if isSignedIn() && isValidId(staffId) &&
+          incoming().keys().hasAll(['ownerId', 'memberUids', 'userUid', 'email', 'displayName', 'role', 'assignedClassIds', 'active', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['ownerId', 'memberUids', 'userUid', 'email', 'displayName', 'role', 'assignedClassIds', 'active', 'createdAt', 'updatedAt']) &&
+          isValidStaffMember(incoming()) &&
+          isCampusAdmin(campusId);
+        allow update: if isValidId(staffId) &&
+          isValidStaffMember(incoming()) &&
+          isCampusAdmin(campusId) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'email', 'displayName', 'role', 'assignedClassIds', 'active', 'updatedAt']);
+        allow delete: if isValidId(staffId) && isCampusAdmin(campusId);
+      }
+
+      match /sessions/{sessionId} {
+        allow get: if isValidId(sessionId) && isCampusMember(existing());
+        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow create: if isSignedIn() && isValidId(sessionId) &&
+          incoming().keys().hasAll(['ownerId', 'memberUids', 'name', 'current', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['ownerId', 'memberUids', 'name', 'current', 'createdAt', 'updatedAt']) &&
+          isValidSession(incoming()) &&
+          isCampusAdmin(campusId);
+        allow update: if isValidId(sessionId) &&
+          isValidSession(incoming()) &&
+          isCampusAdmin(campusId) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'name', 'current', 'updatedAt']);
+        allow delete: if isValidId(sessionId) && isCampusAdmin(campusId);
+      }
+
+      match /examinations/{examId} {
+        allow get: if isValidId(examId) && isCampusMember(existing());
+        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow create: if isSignedIn() && isValidId(examId) &&
+          incoming().keys().hasAll(['ownerId', 'memberUids', 'sessionId', 'name', 'examType', 'useCustomGrading', 'sortOrder', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['ownerId', 'memberUids', 'sessionId', 'name', 'examType', 'useCustomGrading', 'sortOrder', 'createdAt', 'updatedAt']) &&
+          isValidExamination(incoming()) &&
+          isCampusAdmin(campusId);
+        allow update: if isValidId(examId) &&
+          isValidExamination(incoming()) &&
+          isCampusAdmin(campusId) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'sessionId', 'name', 'examType', 'useCustomGrading', 'sortOrder', 'updatedAt']);
+        allow delete: if isValidId(examId) && isCampusAdmin(campusId);
+      }
+
+      match /classes/{classId} {
+        allow get: if isValidId(classId) && isCampusMember(existing());
+        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow create: if isSignedIn() && isValidId(classId) &&
+          incoming().keys().hasAll(['ownerId', 'memberUids', 'name', 'sortOrder', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['ownerId', 'memberUids', 'name', 'sortOrder', 'createdAt', 'updatedAt']) &&
+          isValidSchoolClass(incoming()) &&
+          isCampusAdmin(campusId);
+        allow update: if isValidId(classId) &&
+          isValidSchoolClass(incoming()) &&
+          isCampusAdmin(campusId) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'name', 'sortOrder', 'updatedAt']);
+        allow delete: if isValidId(classId) && isCampusAdmin(campusId);
+      }
+
+      match /sections/{sectionId} {
+        allow get: if isValidId(sectionId) && isCampusMember(existing());
+        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow create: if isSignedIn() && isValidId(sectionId) &&
+          incoming().keys().hasAll(['ownerId', 'memberUids', 'classId', 'name', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['ownerId', 'memberUids', 'classId', 'name', 'createdAt', 'updatedAt']) &&
+          isValidClassSection(incoming()) &&
+          isCampusAdmin(campusId);
+        allow update: if isValidId(sectionId) &&
+          isValidClassSection(incoming()) &&
+          isCampusAdmin(campusId) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'classId', 'name', 'updatedAt']);
+        allow delete: if isValidId(sectionId) && isCampusAdmin(campusId);
+      }
+
+      match /subjects/{subjectId} {
+        allow get: if isValidId(subjectId) && isCampusMember(existing());
+        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow create: if isSignedIn() && isValidId(subjectId) &&
+          incoming().keys().hasAll(['ownerId', 'memberUids', 'classId', 'name', 'maxMarks', 'passingMarks', 'compulsory', 'sortOrder', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['ownerId', 'memberUids', 'classId', 'name', 'maxMarks', 'passingMarks', 'compulsory', 'sortOrder', 'createdAt', 'updatedAt']) &&
+          isValidSubject(incoming()) &&
+          isCampusAdmin(campusId);
+        allow update: if isValidId(subjectId) &&
+          isValidSubject(incoming()) &&
+          isCampusAdmin(campusId) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'classId', 'name', 'maxMarks', 'passingMarks', 'compulsory', 'sortOrder', 'updatedAt']);
+        allow delete: if isValidId(subjectId) && isCampusAdmin(campusId);
+      }
+
+      match /students/{studentId} {
+        allow get: if isValidId(studentId) && isCampusMember(existing());
+        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow create: if isSignedIn() && isValidId(studentId) &&
+          incoming().keys().hasAll(['ownerId', 'memberUids', 'name', 'fatherName', 'rollNumber', 'admissionNumber', 'classId', 'sectionId', 'sessionId', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['ownerId', 'memberUids', 'name', 'fatherName', 'rollNumber', 'admissionNumber', 'classId', 'sectionId', 'sessionId', 'photoBase64', 'createdAt', 'updatedAt']) &&
+          isValidStudent(incoming()) &&
+          isCampusAdmin(campusId);
+        allow update: if isValidId(studentId) &&
+          isValidStudent(incoming()) &&
+          isCampusAdmin(campusId) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'name', 'fatherName', 'rollNumber', 'admissionNumber', 'classId', 'sectionId', 'sessionId', 'photoBase64', 'updatedAt']);
+        allow delete: if isValidId(studentId) && isCampusAdmin(campusId);
+      }
+
+      match /marks/{markId} {
+        allow get: if isValidId(markId) && isCampusMember(existing());
+        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow create: if isSignedIn() && isValidId(markId) &&
+          incoming().enteredByUid == request.auth.uid &&
+          incoming().keys().hasAll(['ownerId', 'memberUids', 'sessionId', 'examId', 'classId', 'sectionId', 'studentId', 'subjectId', 'obtainedMarks', 'enteredByUid', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['ownerId', 'memberUids', 'sessionId', 'examId', 'classId', 'sectionId', 'studentId', 'subjectId', 'obtainedMarks', 'enteredByUid', 'createdAt', 'updatedAt']) &&
+          isValidMarkEntry(incoming()) &&
+          (isCampusAdmin(campusId) || isCampusTeacherForClass(campusId, incoming().classId));
+        allow update: if isValidId(markId) &&
+          isValidMarkEntry(incoming()) &&
+          incoming().enteredByUid == request.auth.uid &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().sessionId == existing().sessionId &&
+          incoming().examId == existing().examId &&
+          incoming().studentId == existing().studentId &&
+          incoming().subjectId == existing().subjectId &&
+          (isCampusAdmin(campusId) || isCampusTeacherForClass(campusId, existing().classId)) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'classId', 'sectionId', 'obtainedMarks', 'enteredByUid', 'updatedAt']);
+        allow delete: if isValidId(markId) && isCampusAdmin(campusId);
+      }
+
+      match /grading_rules/{ruleId} {
+        allow get: if isValidId(ruleId) && isCampusMember(existing());
+        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow create: if isSignedIn() && isValidId(ruleId) &&
+          incoming().keys().hasAll(['ownerId', 'memberUids', 'examId', 'minPercentage', 'maxPercentage', 'grade', 'remarks', 'passing', 'sortOrder', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['ownerId', 'memberUids', 'examId', 'minPercentage', 'maxPercentage', 'grade', 'remarks', 'passing', 'sortOrder', 'createdAt', 'updatedAt']) &&
+          isValidGradingRule(incoming()) &&
+          isCampusAdmin(campusId);
+        allow update: if isValidId(ruleId) &&
+          isValidGradingRule(incoming()) &&
+          isCampusAdmin(campusId) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'examId', 'minPercentage', 'maxPercentage', 'grade', 'remarks', 'passing', 'sortOrder', 'updatedAt']);
+        allow delete: if isValidId(ruleId) && isCampusAdmin(campusId);
+      }
+
+      match /result_records/{recordId} {
+        allow get: if isValidId(recordId) && isCampusMember(existing());
+        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow create: if isSignedIn() && isValidId(recordId) &&
+          incoming().keys().hasAll(['ownerId', 'memberUids', 'sessionId', 'examId', 'classId', 'sectionId', 'studentId', 'totalMaxMarks', 'totalObtainedMarks', 'percentage', 'grade', 'passed', 'status', 'position', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['ownerId', 'memberUids', 'sessionId', 'examId', 'classId', 'sectionId', 'studentId', 'totalMaxMarks', 'totalObtainedMarks', 'percentage', 'grade', 'passed', 'status', 'position', 'teacherRemarks', 'createdAt', 'updatedAt']) &&
+          isValidResultRecord(incoming()) &&
+          (isCampusAdmin(campusId) || isCampusTeacherForClass(campusId, incoming().classId));
+        allow update: if isValidId(recordId) &&
+          isValidResultRecord(incoming()) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          (isCampusAdmin(campusId) || isCampusTeacherForClass(campusId, existing().classId)) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'classId', 'sectionId', 'totalMaxMarks', 'totalObtainedMarks', 'percentage', 'grade', 'passed', 'status', 'position', 'teacherRemarks', 'updatedAt']);
+        allow delete: if isValidId(recordId) && isCampusAdmin(campusId);
+      }
+    }
+  }
+}

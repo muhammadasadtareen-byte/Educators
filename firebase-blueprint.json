@@ -1,0 +1,265 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user profile and active campus reference",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "description": "User email address" },
+        "displayName": { "type": "string", "description": "User full display name" },
+        "activeCampusId": { "type": "string", "description": "Currently selected campus ID" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp" }
+      },
+      "required": ["userId", "email", "displayName", "activeCampusId", "createdAt", "updatedAt"]
+    },
+    "Campus": {
+      "title": "Campus",
+      "description": "School campus configuration and member authorization roster",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "description": "Administrator owner UID" },
+        "memberUids": { "type": "array", "description": "Authorized staff UIDs" },
+        "schoolName": { "type": "string", "description": "School display name" },
+        "campusName": { "type": "string", "description": "Campus subtitle" },
+        "logoBase64": { "type": "string", "description": "Optional compressed school logo base64" },
+        "activeSessionId": { "type": "string", "description": "Active academic session ID" },
+        "activeExamId": { "type": "string", "description": "Active examination ID" },
+        "allowDecimalMarks": { "type": "boolean", "description": "Whether decimal marks are permitted" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp" }
+      },
+      "required": ["ownerId", "memberUids", "schoolName", "campusName", "activeSessionId", "activeExamId", "allowDecimalMarks", "createdAt", "updatedAt"]
+    },
+    "StaffMember": {
+      "title": "StaffMember",
+      "description": "Campus staff account and RBAC role assignment",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "description": "Campus owner UID" },
+        "memberUids": { "type": "array", "description": "Authorized campus member UIDs" },
+        "userUid": { "type": "string", "description": "Staff user Firebase UID" },
+        "email": { "type": "string", "description": "Staff email" },
+        "displayName": { "type": "string", "description": "Staff full name" },
+        "role": { "type": "string", "enum": ["ADMIN", "TEACHER"], "description": "Staff role" },
+        "assignedClassIds": { "type": "array", "description": "Class IDs assigned to teacher" },
+        "active": { "type": "boolean", "description": "Whether account is active" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp" }
+      },
+      "required": ["ownerId", "memberUids", "userUid", "email", "displayName", "role", "assignedClassIds", "active", "createdAt", "updatedAt"]
+    },
+    "AcademicSession": {
+      "title": "AcademicSession",
+      "description": "Academic year session such as 2026-2027",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "name": { "type": "string" },
+        "current": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "memberUids", "name", "current", "createdAt", "updatedAt"]
+    },
+    "Examination": {
+      "title": "Examination",
+      "description": "School examination term",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "sessionId": { "type": "string" },
+        "name": { "type": "string" },
+        "examType": { "type": "string", "enum": ["MONTHLY_TEST", "MIDTERM", "FINAL_TERM", "ANNUAL", "CUSTOM"] },
+        "useCustomGrading": { "type": "boolean" },
+        "sortOrder": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "memberUids", "sessionId", "name", "examType", "useCustomGrading", "sortOrder", "createdAt", "updatedAt"]
+    },
+    "SchoolClass": {
+      "title": "SchoolClass",
+      "description": "School grade/class from Playgroup to Class 10",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "name": { "type": "string" },
+        "sortOrder": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "memberUids", "name", "sortOrder", "createdAt", "updatedAt"]
+    },
+    "ClassSection": {
+      "title": "ClassSection",
+      "description": "Section within a class",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "classId": { "type": "string" },
+        "name": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "memberUids", "classId", "name", "createdAt", "updatedAt"]
+    },
+    "Subject": {
+      "title": "Subject",
+      "description": "Subject configured per class with max and passing marks",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "classId": { "type": "string" },
+        "name": { "type": "string" },
+        "maxMarks": { "type": "number" },
+        "passingMarks": { "type": "number" },
+        "compulsory": { "type": "boolean" },
+        "sortOrder": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "memberUids", "classId", "name", "maxMarks", "passingMarks", "compulsory", "sortOrder", "createdAt", "updatedAt"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Enrolled student record",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "name": { "type": "string" },
+        "fatherName": { "type": "string" },
+        "rollNumber": { "type": "string" },
+        "admissionNumber": { "type": "string" },
+        "classId": { "type": "string" },
+        "sectionId": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "photoBase64": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "memberUids", "name", "fatherName", "rollNumber", "admissionNumber", "classId", "sectionId", "sessionId", "createdAt", "updatedAt"]
+    },
+    "MarkEntry": {
+      "title": "MarkEntry",
+      "description": "Subject-wise marks for a student in an exam",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "sessionId": { "type": "string" },
+        "examId": { "type": "string" },
+        "classId": { "type": "string" },
+        "sectionId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "subjectId": { "type": "string" },
+        "obtainedMarks": { "type": "number" },
+        "enteredByUid": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "memberUids", "sessionId", "examId", "classId", "sectionId", "studentId", "subjectId", "obtainedMarks", "enteredByUid", "createdAt", "updatedAt"]
+    },
+    "GradingRule": {
+      "title": "GradingRule",
+      "description": "Percentage-to-grade mapping rule",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "examId": { "type": "string" },
+        "minPercentage": { "type": "number" },
+        "maxPercentage": { "type": "number" },
+        "grade": { "type": "string" },
+        "remarks": { "type": "string" },
+        "passing": { "type": "boolean" },
+        "sortOrder": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "memberUids", "examId", "minPercentage", "maxPercentage", "grade", "remarks", "passing", "sortOrder", "createdAt", "updatedAt"]
+    },
+    "ResultRecord": {
+      "title": "ResultRecord",
+      "description": "Computed overall result record and teacher remarks per student/exam",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "sessionId": { "type": "string" },
+        "examId": { "type": "string" },
+        "classId": { "type": "string" },
+        "sectionId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "totalMaxMarks": { "type": "number" },
+        "totalObtainedMarks": { "type": "number" },
+        "percentage": { "type": "number" },
+        "grade": { "type": "string" },
+        "passed": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["COMPLETE", "INCOMPLETE"] },
+        "position": { "type": "integer" },
+        "teacherRemarks": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "memberUids", "sessionId", "examId", "classId", "sectionId", "studentId", "totalMaxMarks", "totalObtainedMarks", "percentage", "grade", "passed", "status", "position", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User account profiles"
+    },
+    "/campuses/{campusId}": {
+      "schema": { "$ref": "#/entities/Campus" },
+      "description": "Campus workspace settings"
+    },
+    "/campuses/{campusId}/staff/{staffId}": {
+      "schema": { "$ref": "#/entities/StaffMember" },
+      "description": "Staff accounts and roles"
+    },
+    "/campuses/{campusId}/sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/AcademicSession" },
+      "description": "Academic sessions"
+    },
+    "/campuses/{campusId}/examinations/{examId}": {
+      "schema": { "$ref": "#/entities/Examination" },
+      "description": "Examinations"
+    },
+    "/campuses/{campusId}/classes/{classId}": {
+      "schema": { "$ref": "#/entities/SchoolClass" },
+      "description": "School classes"
+    },
+    "/campuses/{campusId}/sections/{sectionId}": {
+      "schema": { "$ref": "#/entities/ClassSection" },
+      "description": "Class sections"
+    },
+    "/campuses/{campusId}/subjects/{subjectId}": {
+      "schema": { "$ref": "#/entities/Subject" },
+      "description": "Subjects per class"
+    },
+    "/campuses/{campusId}/students/{studentId}": {
+      "schema": { "$ref": "#/entities/Student" },
+      "description": "Students"
+    },
+    "/campuses/{campusId}/marks/{markId}": {
+      "schema": { "$ref": "#/entities/MarkEntry" },
+      "description": "Subject marks"
+    },
+    "/campuses/{campusId}/grading_rules/{ruleId}": {
+      "schema": { "$ref": "#/entities/GradingRule" },
+      "description": "Grading rules"
+    },
+    "/campuses/{campusId}/result_records/{recordId}": {
+      "schema": { "$ref": "#/entities/ResultRecord" },
+      "description": "Result records"
+    }
+  }
+}

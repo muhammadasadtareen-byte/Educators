@@ -1,0 +1,6 @@
+{
+  "name": "Educators Results",
+  "description": "Smart Result Management System for The Educators Abbottabad Main Campus",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

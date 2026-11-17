@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Educators Results</string>
+    <string name="school_title">THE EDUCATORS</string>
+    <string name="campus_title">ABBOTTABAD MAIN CAMPUS</string>
+    <string name="system_subtitle">Smart Result Management System</string>
+    <string name="sign_in_google">Sign in with Google</string>
+    <string name="sign_out">Sign Out</string>
+    <string name="all_marks_entered">All students\' marks have been entered successfully.</string>
+</resources>
