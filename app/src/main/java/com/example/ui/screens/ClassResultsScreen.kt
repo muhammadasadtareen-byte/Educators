@@ -46,6 +46,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.data.model.Examination
 import com.example.data.model.ResultStatus
 import com.example.data.model.StudentResultSummary
 import com.example.domain.PdfReportGenerator
@@ -55,6 +56,7 @@ import com.example.ui.MainViewModel
 import com.example.ui.SchoolSnapshot
 import com.example.ui.theme.AmberPending
 import com.example.ui.theme.CrimsonFail
+import com.example.ui.theme.EducatorsBlue
 import com.example.ui.theme.EducatorsNavy
 import com.example.ui.theme.EmeraldPass
 import java.io.File
@@ -130,6 +132,7 @@ fun ClassResultsScreen(
     }
 
     var pendingSaveFile by remember { mutableStateOf<File?>(null) }
+    var editingExam by remember { mutableStateOf<Examination?>(null) }
     val savePdfLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/pdf")
     ) { uri ->
@@ -157,10 +160,22 @@ fun ClassResultsScreen(
             .padding(horizontal = 16.dp)
     ) {
         Spacer(Modifier.height(10.dp))
+        TabLegendCard(
+            tabTitle = "Class Results",
+            summary = "Unified class mark sheet ranked by position. Swipe table sideways for all subjects.",
+            items = listOf(
+                LegendBadge("Pass", EmeraldPass, "Cleared exam"),
+                LegendBadge("Fail / Red", CrimsonFail, "Failed exam or subject"),
+                LegendBadge("Pending", AmberPending, "Awaiting remaining marks"),
+                LegendBadge("Pos", EducatorsBlue, "Class rank")
+            )
+        )
+        Spacer(Modifier.height(8.dp))
         CampusContextBar(
             snapshot = snapshot,
             onSelectSession = { viewModel.selectSession(it) },
-            onSelectExam = { viewModel.selectExam(it) }
+            onSelectExam = { viewModel.selectExam(it) },
+            onEditSelectedExam = { editingExam = it }
         )
         Spacer(Modifier.height(8.dp))
 
@@ -350,6 +365,33 @@ fun ClassResultsScreen(
                 }
             }
         }
+    }
+
+    editingExam?.let { target ->
+        ExamEditorDialog(
+            existing = target,
+            sessions = snapshot.sessions,
+            defaultSessionId = snapshot.selectedSessionId,
+            defaultSortOrder = target.sortOrder,
+            canDelete = snapshot.examinations.size > 1,
+            onDismiss = { editingExam = null },
+            onSave = { name, examType, sessionId, useCustomGrading, sortOrder ->
+                viewModel.updateExamination(
+                    campusId = snapshot.campus.id,
+                    examId = target.id,
+                    sessionId = sessionId,
+                    name = name,
+                    examType = examType,
+                    useCustomGrading = useCustomGrading,
+                    sortOrder = sortOrder
+                )
+                editingExam = null
+            },
+            onDelete = {
+                viewModel.deleteExamination(snapshot.campus.id, target.id)
+                editingExam = null
+            }
+        )
     }
 }
 

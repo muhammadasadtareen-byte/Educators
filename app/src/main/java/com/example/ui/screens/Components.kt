@@ -6,12 +6,15 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,19 +23,34 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,10 +63,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import com.example.data.model.AcademicSession
+import com.example.data.model.ExamType
+import com.example.data.model.Examination
+import com.example.data.model.StaffRole
 import com.example.ui.SchoolSnapshot
 import com.example.ui.theme.AmberPending
 import com.example.ui.theme.AmberPendingContainer
@@ -278,15 +302,120 @@ fun EmptyStateCard(
     }
 }
 
+data class LegendBadge(
+    val label: String,
+    val dotColor: Color,
+    val description: String
+)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun TabLegendCard(
+    tabTitle: String,
+    summary: String,
+    items: List<LegendBadge>,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(true) }
+    Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("tab_legend_${tabTitle.lowercase().replace(" ", "_")}")
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = "Legend",
+                        tint = EducatorsBlue,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = "Legend • $tabTitle",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Hide legend" else "Show legend",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            AnimatedVisibility(visible = expanded) {
+                Column(
+                    modifier = Modifier.padding(top = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = summary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (items.isNotEmpty()) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items.forEach { badge ->
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surface,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(8.dp)
+                                                .clip(CircleShape)
+                                                .background(badge.dotColor)
+                                        )
+                                        Text(
+                                            text = "${badge.label}: ${badge.description}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun CampusContextBar(
     snapshot: SchoolSnapshot,
     onSelectSession: (String) -> Unit,
-    onSelectExam: (String) -> Unit
+    onSelectExam: (String) -> Unit,
+    onEditSelectedExam: ((Examination) -> Unit)? = null
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         SelectorDropdown(
             label = "Academic Session",
@@ -302,9 +431,185 @@ fun CampusContextBar(
             items = snapshot.examinations,
             itemLabel = { it.name },
             onSelect = { onSelectExam(it.id) },
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1.1f)
         )
+        val selectedExam = snapshot.selectedExam
+        if (onEditSelectedExam != null && snapshot.effectiveRole == StaffRole.ADMIN && selectedExam != null) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                modifier = Modifier.heightIn(min = 52.dp)
+            ) {
+                IconButton(
+                    onClick = { onEditSelectedExam(selectedExam) },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("edit_selected_exam_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "Edit Examination",
+                        tint = EducatorsBlue
+                    )
+                }
+            }
+        }
     }
+}
+
+@Composable
+fun ExamEditorDialog(
+    existing: Examination?,
+    sessions: List<AcademicSession>,
+    defaultSessionId: String,
+    defaultSortOrder: Long,
+    canDelete: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (name: String, examType: ExamType, sessionId: String, useCustomGrading: Boolean, sortOrder: Long) -> Unit,
+    onDelete: (() -> Unit)? = null
+) {
+    var name by remember(existing) { mutableStateOf(existing?.name ?: "") }
+    var examType by remember(existing) { mutableStateOf(existing?.parsedExamType() ?: ExamType.MIDTERM) }
+    var sessionId by remember(existing, defaultSessionId) {
+        mutableStateOf(existing?.sessionId?.takeIf { it.isNotBlank() } ?: defaultSessionId)
+    }
+    var customGrading by remember(existing) { mutableStateOf(existing?.useCustomGrading ?: false) }
+    var sortOrderText by remember(existing, defaultSortOrder) {
+        mutableStateOf((existing?.sortOrder ?: defaultSortOrder).toString())
+    }
+    var confirmDelete by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (existing == null) "New Examination" else "Edit Examination") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = {
+                        name = it
+                        errorMsg = null
+                    },
+                    label = { Text("Exam Name *") },
+                    placeholder = { Text("e.g. Midterm, 1st Term, Unit Test") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("exam_name_input")
+                )
+                SelectorDropdown(
+                    label = "Exam Type",
+                    selectedText = examType.label,
+                    items = ExamType.entries,
+                    itemLabel = { it.label },
+                    onSelect = {
+                        examType = it
+                        if (name.isBlank()) name = it.label
+                    }
+                )
+                if (sessions.isNotEmpty()) {
+                    SelectorDropdown(
+                        label = "Academic Session",
+                        selectedText = sessions.firstOrNull { it.id == sessionId }?.name ?: "Select Session",
+                        items = sessions,
+                        itemLabel = { it.name },
+                        onSelect = { sessionId = it.id }
+                    )
+                }
+                OutlinedTextField(
+                    value = sortOrderText,
+                    onValueChange = { sortOrderText = it },
+                    label = { Text("Display Order (1, 2, 3...)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Use Custom Grading Rules", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Overrides default campus grading scale",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(checked = customGrading, onCheckedChange = { customGrading = it })
+                }
+                if (existing != null && canDelete && onDelete != null) {
+                    if (!confirmDelete) {
+                        OutlinedButton(
+                            onClick = { confirmDelete = true },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = CrimsonFail),
+                            border = BorderStroke(1.dp, CrimsonFail.copy(alpha = 0.5f)),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Delete Examination")
+                        }
+                    } else {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = CrimsonFailContainer,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    "Confirm delete?",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = CrimsonFail
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    TextButton(onClick = { confirmDelete = false }) { Text("No") }
+                                    Button(
+                                        onClick = onDelete,
+                                        colors = ButtonDefaults.buttonColors(containerColor = CrimsonFail)
+                                    ) { Text("Delete") }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (errorMsg != null) {
+                    Text(errorMsg ?: "", color = CrimsonFail, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val trimmedName = name.trim()
+                    val parsedOrder = sortOrderText.trim().toLongOrNull() ?: defaultSortOrder
+                    when {
+                        trimmedName.isBlank() -> errorMsg = "Exam Name is required."
+                        sessionId.isBlank() -> errorMsg = "Please select an Academic Session."
+                        else -> onSave(trimmedName, examType, sessionId, customGrading, parsedOrder.coerceIn(0L, 1000L))
+                    }
+                },
+                modifier = Modifier.testTag("save_exam_btn")
+            ) {
+                Text(if (existing == null) "Create" else "Save Changes")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable

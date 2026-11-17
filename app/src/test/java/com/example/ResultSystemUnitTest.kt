@@ -11,6 +11,7 @@ import com.example.data.model.SchoolClass
 import com.example.data.model.Student
 import com.example.data.model.Subject
 import com.example.domain.ResultCalculator
+import com.example.domain.StudentDocumentExtractor
 import com.example.domain.XlsxEngine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -21,6 +22,9 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -320,5 +324,83 @@ class ResultSystemUnitTest {
         )
         assertEquals(0, marksNoDecimals.validRows.size)
         assertEquals(2, marksNoDecimals.errors.size)
+    }
+
+    @Test
+    fun `extractTextFromDocxStream reads paragraphs and tables into student candidates`() {
+        val docXml = """
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+              <w:body>
+                <w:p><w:r><w:t>THE EDUCATORS ABBOTTABAD</w:t></w:r></w:p>
+                <w:p><w:r><w:t>Student List</w:t></w:r></w:p>
+                <w:tbl>
+                  <w:tr>
+                    <w:tc><w:p><w:r><w:t>Roll No</w:t></w:r></w:p></w:tc>
+                    <w:tc><w:p><w:r><w:t>Student Name</w:t></w:r></w:p></w:tc>
+                    <w:tc><w:p><w:r><w:t>Father's Name</w:t></w:r></w:p></w:tc>
+                  </w:tr>
+                  <w:tr>
+                    <w:tc><w:p><w:r><w:t>101</w:t></w:r></w:p></w:tc>
+                    <w:tc><w:p><w:r><w:t>Hamza Tariq</w:t></w:r></w:p></w:tc>
+                    <w:tc><w:p><w:r><w:t>Tariq Mehmood</w:t></w:r></w:p></w:tc>
+                  </w:tr>
+                  <w:tr>
+                    <w:tc><w:p><w:r><w:t>102</w:t></w:r></w:p></w:tc>
+                    <w:tc><w:p><w:r><w:t>Ayesha Siddiqui</w:t></w:r></w:p></w:tc>
+                    <w:tc><w:p><w:r><w:t>Salman Siddiqui</w:t></w:r></w:p></w:tc>
+                  </w:tr>
+                </w:tbl>
+              </w:body>
+            </w:document>
+        """.trimIndent()
+
+        val baos = ByteArrayOutputStream()
+        ZipOutputStream(baos).use { zos ->
+            zos.putNextEntry(ZipEntry("word/document.xml"))
+            zos.write(docXml.toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
+        }
+
+        val rawText = StudentDocumentExtractor.extractTextFromWordBytes(baos.toByteArray())
+        val candidates = StudentDocumentExtractor.parseStudentCandidates(rawText, startingRoll = 1)
+
+        assertEquals(2, candidates.size)
+        assertEquals("101", candidates[0].rollNumber)
+        assertEquals("Hamza Tariq", candidates[0].name)
+        assertEquals("Tariq Mehmood", candidates[0].fatherName)
+        assertEquals("ADM-101", candidates[0].admissionNumber)
+
+        assertEquals("102", candidates[1].rollNumber)
+        assertEquals("Ayesha Siddiqui", candidates[1].name)
+        assertEquals("Salman Siddiqui", candidates[1].fatherName)
+    }
+
+    @Test
+    fun `parseStudentCandidates handles numbered lists and S_O D_O lines while filtering noise`() {
+        val ocrSample = """
+            THE EDUCATORS
+            Class: Class 5   Page 1
+            1. Muhammad Usman S/O Khalid Mehmood
+            2) Zainab Bibi D/O Shafqat Ali
+            Bilal Ahmed
+            0312-1234567
+        """.trimIndent()
+
+        val candidates = StudentDocumentExtractor.parseStudentCandidates(ocrSample, startingRoll = 5)
+        assertEquals(3, candidates.size)
+
+        assertEquals("1", candidates[0].rollNumber)
+        assertEquals("Muhammad Usman", candidates[0].name)
+        assertEquals("Khalid Mehmood", candidates[0].fatherName)
+
+        assertEquals("2", candidates[1].rollNumber)
+        assertEquals("Zainab Bibi", candidates[1].name)
+        assertEquals("Shafqat Ali", candidates[1].fatherName)
+
+        assertEquals("5", candidates[2].rollNumber)
+        assertEquals("Bilal Ahmed", candidates[2].name)
+        assertEquals("-", candidates[2].fatherName)
+        assertEquals("ADM-5", candidates[2].admissionNumber)
     }
 }

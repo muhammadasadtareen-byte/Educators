@@ -313,6 +313,22 @@ class MainViewModel(
         repository.updateExaminationCustomGrading(campusId, examId, useCustom)
     }
 
+    fun updateExamination(
+        campusId: String,
+        examId: String,
+        sessionId: String,
+        name: String,
+        examType: ExamType,
+        useCustomGrading: Boolean,
+        sortOrder: Long
+    ) = runMutation("Examination updated.") {
+        repository.updateExamination(campusId, examId, sessionId, name, examType, useCustomGrading, sortOrder)
+    }
+
+    fun deleteExamination(campusId: String, examId: String) = runMutation("Examination deleted.") {
+        repository.deleteExamination(campusId, examId)
+    }
+
     fun addClass(campus: Campus, name: String, sortOrder: Long, sectionsCsv: String) {
         val secList = sectionsCsv.split(",").map { it.trim() }.filter { it.isNotBlank() }
         viewModelScope.launch {

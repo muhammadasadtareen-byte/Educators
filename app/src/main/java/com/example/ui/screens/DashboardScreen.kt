@@ -44,6 +44,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,6 +61,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.AppRoute
 import com.example.R
+import com.example.data.model.ExamType
+import com.example.data.model.Examination
 import com.example.data.model.StaffRole
 import com.example.domain.ResultCalculator
 import com.example.ui.SchoolSnapshot
@@ -73,8 +79,12 @@ fun DashboardScreen(
     snapshot: SchoolSnapshot,
     onSelectSession: (String) -> Unit,
     onSelectExam: (String) -> Unit,
-    onNavigate: (String) -> Unit
+    onNavigate: (String) -> Unit,
+    onUpdateExam: (examId: String, sessionId: String, name: String, examType: ExamType, useCustomGrading: Boolean, sortOrder: Long) -> Unit = { _, _, _, _, _, _ -> },
+    onDeleteExam: (examId: String) -> Unit = {}
 ) {
+    var editingExam by remember { mutableStateOf<Examination?>(null) }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -190,12 +200,26 @@ fun DashboardScreen(
             }
         }
 
+        // Tab Legend
+        item {
+            TabLegendCard(
+                tabTitle = "Dashboard",
+                summary = "Live campus overview for the selected Academic Session & Examination.",
+                items = listOf(
+                    LegendBadge("Total", EducatorsBlue, "Active students, classes & subjects"),
+                    LegendBadge("Completed", EmeraldPass, "All subject marks entered"),
+                    LegendBadge("Pending", AmberPending, "Missing marks in 1+ subjects")
+                )
+            )
+        }
+
         // Session & Exam Context Selector
         item {
             CampusContextBar(
                 snapshot = snapshot,
                 onSelectSession = onSelectSession,
-                onSelectExam = onSelectExam
+                onSelectExam = onSelectExam,
+                onEditSelectedExam = { editingExam = it }
             )
         }
 
@@ -396,6 +420,25 @@ fun DashboardScreen(
         }
 
         item { Spacer(Modifier.height(16.dp)) }
+    }
+
+    editingExam?.let { target ->
+        ExamEditorDialog(
+            existing = target,
+            sessions = snapshot.sessions,
+            defaultSessionId = snapshot.selectedSessionId,
+            defaultSortOrder = target.sortOrder,
+            canDelete = snapshot.examinations.size > 1,
+            onDismiss = { editingExam = null },
+            onSave = { name, examType, sessionId, useCustomGrading, sortOrder ->
+                onUpdateExam(target.id, sessionId, name, examType, useCustomGrading, sortOrder)
+                editingExam = null
+            },
+            onDelete = {
+                onDeleteExam(target.id)
+                editingExam = null
+            }
+        )
     }
 }
 

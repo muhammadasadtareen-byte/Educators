@@ -393,6 +393,52 @@ class SchoolRepository(
         }
     }
 
+    suspend fun updateExamination(
+        campusId: String,
+        examId: String,
+        sessionId: String,
+        name: String,
+        examType: ExamType,
+        useCustomGrading: Boolean,
+        sortOrder: Long
+    ): Result<Unit> {
+        val ref = campusDoc(campusId).collection("examinations").document(examId)
+        return try {
+            requireUserId()
+            val cleanName = name.trim().ifBlank { examType.label }.take(80)
+            ref.update(
+                mapOf(
+                    "sessionId" to sessionId,
+                    "name" to cleanName,
+                    "examType" to examType.name,
+                    "useCustomGrading" to useCustomGrading,
+                    "sortOrder" to sortOrder.coerceIn(0L, 1000L),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, ref.path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteExamination(campusId: String, examId: String): Result<Unit> {
+        val ref = campusDoc(campusId).collection("examinations").document(examId)
+        return try {
+            requireUserId()
+            ref.delete().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, ref.path)
+            Result.failure(e)
+        }
+    }
+
     // --- CLASSES & SECTIONS ---
 
     suspend fun addClassWithSections(
@@ -742,16 +788,20 @@ class SchoolRepository(
             requireUserId()
             drafts.chunked(400).forEach { chunk ->
                 val batch = db.batch()
-                chunk.forEach { d ->
+                chunk.forEachIndexed { idx, d ->
+                    val safeName = d.name.trim().ifBlank { "Student ${idx + 1}" }.take(100)
+                    val safeFather = d.fatherName.trim().ifBlank { "-" }.take(100)
+                    val safeRoll = d.rollNumber.trim().ifBlank { "${idx + 1}" }.take(30)
+                    val safeAdm = d.admissionNumber.trim().ifBlank { "ADM-$safeRoll" }.take(40)
                     batch.set(
                         col.document(shortId("stu")),
                         mapOf(
                             "ownerId" to campus.ownerId,
                             "memberUids" to campus.memberUids,
-                            "name" to d.name.take(100),
-                            "fatherName" to d.fatherName.take(100),
-                            "rollNumber" to d.rollNumber.take(30),
-                            "admissionNumber" to d.admissionNumber.take(40),
+                            "name" to safeName,
+                            "fatherName" to safeFather,
+                            "rollNumber" to safeRoll,
+                            "admissionNumber" to safeAdm,
                             "classId" to d.classId,
                             "sectionId" to d.sectionId,
                             "sessionId" to d.sessionId,

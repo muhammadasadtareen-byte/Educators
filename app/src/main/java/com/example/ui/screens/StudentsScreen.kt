@@ -24,6 +24,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.People
@@ -62,6 +63,7 @@ import com.example.ui.SchoolSnapshot
 import com.example.ui.theme.CrimsonFail
 import com.example.ui.theme.EducatorsBlue
 import com.example.ui.theme.EducatorsNavy
+import com.example.ui.theme.EmeraldPass
 
 @Composable
 fun StudentsScreen(
@@ -74,6 +76,7 @@ fun StudentsScreen(
     var filterClassId by remember { mutableStateOf("ALL") }
     var editingStudent by remember { mutableStateOf<Student?>(null) }
     var showAddEditDialog by remember { mutableStateOf(false) }
+    var showExtractDialog by remember { mutableStateOf(false) }
     var deleteCandidate by remember { mutableStateOf<Student?>(null) }
 
     val filteredStudents = remember(snapshot.visibleStudents, searchQuery, filterClassId) {
@@ -114,33 +117,60 @@ fun StudentsScreen(
         ) {
             Spacer(Modifier.height(10.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search name or roll no...") },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("student_search_input")
+            TabLegendCard(
+                tabTitle = "Student Management",
+                summary = "Manage enrolled students, extract names from Image/PDF/Word, or import via Excel.",
+                items = listOf(
+                    LegendBadge("Extract", EducatorsBlue, "OCR/read from Photo, PDF, or Word"),
+                    LegendBadge("Edit / Delete", EmeraldPass, "Update or remove student profile"),
+                    LegendBadge("+ Add", EducatorsNavy, "Enroll single student")
                 )
-                if (isAdmin) {
+            )
+
+            Spacer(Modifier.height(10.dp))
+
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("Search name, father, or roll no...") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("student_search_input")
+            )
+
+            if (isAdmin && snapshot.visibleClasses.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = { showExtractDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = EducatorsBlue),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .weight(1.3f)
+                            .heightIn(min = 48.dp)
+                            .testTag("extract_students_btn")
+                    ) {
+                        Icon(Icons.Default.DocumentScanner, contentDescription = "Extract from Image, PDF, or Word", modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Extract (Img/PDF/Word)", maxLines = 1)
+                    }
                     OutlinedButton(
                         onClick = { onNavigate(AppRoute.EXCEL_CENTER) },
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
-                            .heightIn(min = 52.dp)
+                            .weight(0.9f)
+                            .heightIn(min = 48.dp)
                             .testTag("import_students_shortcut_btn")
                     ) {
                         Icon(Icons.Default.FileUpload, contentDescription = "Import Excel", modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Import")
+                        Text("Excel Import", maxLines = 1)
                     }
                 }
             }
@@ -262,6 +292,14 @@ fun StudentsScreen(
                 }
             }
         }
+    }
+
+    if (showExtractDialog) {
+        StudentExtractImportDialog(
+            snapshot = snapshot,
+            viewModel = viewModel,
+            onDismiss = { showExtractDialog = false }
+        )
     }
 
     if (showAddEditDialog) {

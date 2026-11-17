@@ -443,7 +443,21 @@ private fun AppNavHost(
                 snapshot = snapshot,
                 onSelectSession = { viewModel.selectSession(it) },
                 onSelectExam = { viewModel.selectExam(it) },
-                onNavigate = onNavigate
+                onNavigate = onNavigate,
+                onUpdateExam = { examId, sessionId, name, examType, useCustomGrading, sortOrder ->
+                    viewModel.updateExamination(
+                        campusId = snapshot.campus.id,
+                        examId = examId,
+                        sessionId = sessionId,
+                        name = name,
+                        examType = examType,
+                        useCustomGrading = useCustomGrading,
+                        sortOrder = sortOrder
+                    )
+                },
+                onDeleteExam = { examId ->
+                    viewModel.deleteExamination(snapshot.campus.id, examId)
+                }
             )
         }
         composable(AppRoute.STUDENTS) {

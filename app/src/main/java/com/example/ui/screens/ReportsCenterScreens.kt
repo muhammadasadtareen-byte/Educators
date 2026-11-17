@@ -20,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.PictureAsPdf
@@ -47,6 +48,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.data.model.Examination
 import com.example.data.model.ImportPreviewResult
 import com.example.data.model.StaffRole
 import com.example.domain.ImportedMarkDraft
@@ -101,6 +103,8 @@ fun ExcelCenterScreen(
     var pendingXlsxFile by remember { mutableStateOf<File?>(null) }
     var pendingImport by remember { mutableStateOf<PendingImportState?>(null) }
     var activeImportKind by remember { mutableStateOf("STUDENTS") }
+    var editingExam by remember { mutableStateOf<Examination?>(null) }
+    var showExtractDialog by remember { mutableStateOf(false) }
 
     val saveXlsxLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -173,10 +177,23 @@ fun ExcelCenterScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
+            TabLegendCard(
+                tabTitle = "Excel Export & Import",
+                summary = "Export formatted .xlsx workbooks, import spreadsheets, or extract student names from Image/PDF/Word.",
+                items = listOf(
+                    LegendBadge("Save / Share", EmeraldPass, "Download or send .xlsx sheets"),
+                    LegendBadge("Import / Extract", EducatorsBlue, "Validate Excel or Photo/PDF/Word"),
+                    LegendBadge("Edit Exam", EducatorsNavy, "Tap pencil next to Examination")
+                )
+            )
+        }
+
+        item {
             CampusContextBar(
                 snapshot = snapshot,
                 onSelectSession = { viewModel.selectSession(it) },
-                onSelectExam = { viewModel.selectExam(it) }
+                onSelectExam = { viewModel.selectExam(it) },
+                onEditSelectedExam = { editingExam = it }
             )
         }
 
@@ -377,6 +394,32 @@ fun ExcelCenterScreen(
 
         if (isAdmin) {
             item {
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Extract Student Names (Image / PDF / Word)", style = MaterialTheme.typography.titleSmall, color = EducatorsNavy)
+                        Text(
+                            "Scan or read student rosters directly from photos, PDF lists, or Word (.docx/.doc) files and review before saving.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Button(
+                            onClick = { showExtractDialog = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = EducatorsNavy),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("excel_tab_extract_students_btn")
+                        ) {
+                            Icon(Icons.Default.DocumentScanner, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Extract from Image, PDF, or Word")
+                        }
+                    }
+                }
+            }
+            item {
                 ImportActionCard(
                     title = "Import Student Records (.xlsx)",
                     columnsHint = "Columns: Student Name, Father's Name, Roll Number, Admission Number, Class, Section, Academic Session",
@@ -478,6 +521,41 @@ fun ExcelCenterScreen(
             }
         )
     }
+
+    if (showExtractDialog) {
+        StudentExtractImportDialog(
+            snapshot = snapshot,
+            viewModel = viewModel,
+            onDismiss = { showExtractDialog = false }
+        )
+    }
+
+    editingExam?.let { target ->
+        ExamEditorDialog(
+            existing = target,
+            sessions = snapshot.sessions,
+            defaultSessionId = snapshot.selectedSessionId,
+            defaultSortOrder = target.sortOrder,
+            canDelete = snapshot.examinations.size > 1,
+            onDismiss = { editingExam = null },
+            onSave = { name, examType, sessionId, useCustomGrading, sortOrder ->
+                viewModel.updateExamination(
+                    campusId = snapshot.campus.id,
+                    examId = target.id,
+                    sessionId = sessionId,
+                    name = name,
+                    examType = examType,
+                    useCustomGrading = useCustomGrading,
+                    sortOrder = sortOrder
+                )
+                editingExam = null
+            },
+            onDelete = {
+                viewModel.deleteExamination(snapshot.campus.id, target.id)
+                editingExam = null
+            }
+        )
+    }
 }
 
 @Composable
@@ -509,6 +587,7 @@ fun PdfCenterScreen(
     }
 
     var pendingPdfFile by remember { mutableStateOf<File?>(null) }
+    var editingExam by remember { mutableStateOf<Examination?>(null) }
     val savePdfLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/pdf")
     ) { uri ->
@@ -531,10 +610,23 @@ fun PdfCenterScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
+            TabLegendCard(
+                tabTitle = "PDF Export",
+                summary = "Generate official print-ready A4 PDFs for result cards, class registers & summaries.",
+                items = listOf(
+                    LegendBadge("Save", EducatorsNavy, "Download A4 PDF to device"),
+                    LegendBadge("Print / Share", CrimsonFail, "Print directly or share PDF"),
+                    LegendBadge("Edit Exam", EducatorsBlue, "Tap pencil next to Examination")
+                )
+            )
+        }
+
+        item {
             CampusContextBar(
                 snapshot = snapshot,
                 onSelectSession = { viewModel.selectSession(it) },
-                onSelectExam = { viewModel.selectExam(it) }
+                onSelectExam = { viewModel.selectExam(it) },
+                onEditSelectedExam = { editingExam = it }
             )
         }
 
@@ -799,6 +891,33 @@ fun PdfCenterScreen(
                 }
             )
         }
+    }
+
+    editingExam?.let { target ->
+        ExamEditorDialog(
+            existing = target,
+            sessions = snapshot.sessions,
+            defaultSessionId = snapshot.selectedSessionId,
+            defaultSortOrder = target.sortOrder,
+            canDelete = snapshot.examinations.size > 1,
+            onDismiss = { editingExam = null },
+            onSave = { name, examType, sessionId, useCustomGrading, sortOrder ->
+                viewModel.updateExamination(
+                    campusId = snapshot.campus.id,
+                    examId = target.id,
+                    sessionId = sessionId,
+                    name = name,
+                    examType = examType,
+                    useCustomGrading = useCustomGrading,
+                    sortOrder = sortOrder
+                )
+                editingExam = null
+            },
+            onDelete = {
+                viewModel.deleteExamination(snapshot.campus.id, target.id)
+                editingExam = null
+            }
+        )
     }
 }
 

@@ -68,6 +68,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.example.data.model.Examination
 import com.example.data.model.MarkEntry
 import com.example.data.model.Student
 import com.example.data.model.Subject
@@ -147,6 +148,7 @@ fun MarksEntryScreen(
         marksInput.trim() != savedText && marksInput.isNotBlank()
 
     var pendingNavigationAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var editingExam by remember { mutableStateOf<Examination?>(null) }
 
     fun guardUnsaved(action: () -> Unit) {
         if (hasUnsavedChanges) {
@@ -232,6 +234,16 @@ fun MarksEntryScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        TabLegendCard(
+            tabTitle = "Marks Entry",
+            summary = "Enter marks one student at a time (Sequential) or across the whole class (Table Mode).",
+            items = listOf(
+                LegendBadge("#Roll (Dark)", EducatorsNavy, "Selected student"),
+                LegendBadge("#Roll (Green)", EmeraldPass, "Marks saved"),
+                LegendBadge("Pending", AmberPending, "Marks not yet entered")
+            )
+        )
+
         // 5-Step Selector Panel
         Card(
             shape = RoundedCornerShape(16.dp),
@@ -242,7 +254,8 @@ fun MarksEntryScreen(
                 CampusContextBar(
                     snapshot = snapshot,
                     onSelectSession = { guardUnsaved { viewModel.selectSession(it) } },
-                    onSelectExam = { guardUnsaved { viewModel.selectExam(it) } }
+                    onSelectExam = { guardUnsaved { viewModel.selectExam(it) } },
+                    onEditSelectedExam = { guardUnsaved { editingExam = it } }
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SelectorDropdown(
@@ -682,6 +695,33 @@ fun MarksEntryScreen(
                     ) { Text("Discard", color = CrimsonFail) }
                     TextButton(onClick = { pendingNavigationAction = null }) { Text("Cancel") }
                 }
+            }
+        )
+    }
+
+    editingExam?.let { target ->
+        ExamEditorDialog(
+            existing = target,
+            sessions = snapshot.sessions,
+            defaultSessionId = snapshot.selectedSessionId,
+            defaultSortOrder = target.sortOrder,
+            canDelete = snapshot.examinations.size > 1,
+            onDismiss = { editingExam = null },
+            onSave = { name, examType, sessionId, useCustomGrading, sortOrder ->
+                viewModel.updateExamination(
+                    campusId = snapshot.campus.id,
+                    examId = target.id,
+                    sessionId = sessionId,
+                    name = name,
+                    examType = examType,
+                    useCustomGrading = useCustomGrading,
+                    sortOrder = sortOrder
+                )
+                editingExam = null
+            },
+            onDelete = {
+                viewModel.deleteExamination(snapshot.campus.id, target.id)
+                editingExam = null
             }
         )
     }

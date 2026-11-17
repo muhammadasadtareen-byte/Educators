@@ -60,9 +60,11 @@ import com.example.data.model.Subject
 import com.example.domain.ResultCalculator
 import com.example.ui.MainViewModel
 import com.example.ui.SchoolSnapshot
+import com.example.ui.theme.AmberPending
 import com.example.ui.theme.CrimsonFail
 import com.example.ui.theme.EducatorsBlue
 import com.example.ui.theme.EducatorsNavy
+import com.example.ui.theme.EmeraldPass
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -95,6 +97,18 @@ fun ClassesScreen(
             contentPadding = PaddingValues(16.dp, 12.dp, 16.dp, 88.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            item {
+                TabLegendCard(
+                    tabTitle = "Class Management",
+                    summary = "Create school classes (Playgroup–Class 10) and manage their sections (A, B, C).",
+                    items = listOf(
+                        LegendBadge("Quick-Create", EducatorsNavy, "Seeds Playgroup–Class 10"),
+                        LegendBadge("Section Chip", EducatorsBlue, "Active section in class"),
+                        LegendBadge("Delete", CrimsonFail, "Removes class or section")
+                    )
+                )
+            }
+
             if (isAdmin) {
                 item {
                     OutlinedButton(
@@ -302,6 +316,16 @@ fun SubjectsScreen(
                 .padding(innerPadding)
                 .padding(horizontal = 16.dp)
         ) {
+            Spacer(Modifier.height(10.dp))
+            TabLegendCard(
+                tabTitle = "Subject Management",
+                summary = "Define subjects, maximum marks, and passing marks for each class.",
+                items = listOf(
+                    LegendBadge("Compulsory", EmeraldPass, "Required to pass overall exam"),
+                    LegendBadge("Elective", AmberPending, "Optional subject marks"),
+                    LegendBadge("Edit / Delete", EducatorsBlue, "Adjust max or passing marks")
+                )
+            )
             Spacer(Modifier.height(10.dp))
             SelectorDropdown(
                 label = "Select Class",

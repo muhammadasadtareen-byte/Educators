@@ -59,6 +59,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.data.model.Examination
 import com.example.data.model.ResultStatus
 import com.example.data.model.StudentResultSummary
 import com.example.domain.PdfReportGenerator
@@ -67,6 +68,7 @@ import com.example.domain.XlsxEngine
 import com.example.ui.MainViewModel
 import com.example.ui.SchoolSnapshot
 import com.example.ui.theme.AcademicGold
+import com.example.ui.theme.AmberPending
 import com.example.ui.theme.CrimsonFail
 import com.example.ui.theme.EducatorsBlue
 import com.example.ui.theme.EducatorsBlueSurface
@@ -93,6 +95,7 @@ fun ResultCardsScreen(
         ?: classSummaries.firstOrNull()
 
     var pendingSaveFile by remember { mutableStateOf<File?>(null) }
+    var editingExam by remember { mutableStateOf<Examination?>(null) }
     val createPdfLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/pdf")
     ) { uri ->
@@ -125,10 +128,21 @@ fun ResultCardsScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        TabLegendCard(
+            tabTitle = "Result Cards",
+            summary = "Preview A4 result cards, update teacher remarks, and print or save PDF/Excel.",
+            items = listOf(
+                LegendBadge("PASS", EmeraldPass, "Cleared all compulsory subjects"),
+                LegendBadge("* / FAIL", CrimsonFail, "Failed a compulsory subject"),
+                LegendBadge("Pending", AmberPending, "Missing subject marks")
+            )
+        )
+
         CampusContextBar(
             snapshot = snapshot,
             onSelectSession = { viewModel.selectSession(it) },
-            onSelectExam = { viewModel.selectExam(it) }
+            onSelectExam = { viewModel.selectExam(it) },
+            onEditSelectedExam = { editingExam = it }
         )
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -315,6 +329,33 @@ fun ResultCardsScreen(
             }
         }
         Spacer(Modifier.height(20.dp))
+    }
+
+    editingExam?.let { target ->
+        ExamEditorDialog(
+            existing = target,
+            sessions = snapshot.sessions,
+            defaultSessionId = snapshot.selectedSessionId,
+            defaultSortOrder = target.sortOrder,
+            canDelete = snapshot.examinations.size > 1,
+            onDismiss = { editingExam = null },
+            onSave = { name, examType, sessionId, useCustomGrading, sortOrder ->
+                viewModel.updateExamination(
+                    campusId = snapshot.campus.id,
+                    examId = target.id,
+                    sessionId = sessionId,
+                    name = name,
+                    examType = examType,
+                    useCustomGrading = useCustomGrading,
+                    sortOrder = sortOrder
+                )
+                editingExam = null
+            },
+            onDelete = {
+                viewModel.deleteExamination(snapshot.campus.id, target.id)
+                editingExam = null
+            }
+        )
     }
 }
 

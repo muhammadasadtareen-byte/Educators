@@ -71,14 +71,17 @@ import androidx.credentials.CredentialManager
 import com.example.R
 import com.example.data.firebase.AuthHelper
 import com.example.data.model.ExamType
+import com.example.data.model.Examination
 import com.example.data.model.GradingRule
 import com.example.data.model.StaffRole
 import com.example.domain.PdfReportGenerator
 import com.example.ui.MainViewModel
 import com.example.ui.SchoolSnapshot
+import com.example.ui.theme.AmberPending
 import com.example.ui.theme.CrimsonFail
 import com.example.ui.theme.EducatorsBlue
 import com.example.ui.theme.EducatorsNavy
+import com.example.ui.theme.EmeraldPass
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -116,6 +119,7 @@ fun SettingsScreen(
 
     var showAddSessionDialog by remember { mutableStateOf(false) }
     var showAddExamDialog by remember { mutableStateOf(false) }
+    var editingExam by remember { mutableStateOf<Examination?>(null) }
     var showAddStaffDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
@@ -123,6 +127,18 @@ fun SettingsScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        item {
+            TabLegendCard(
+                tabTitle = "Settings",
+                summary = "Configure school branding, academic sessions, editable examinations, grading scales & staff roles.",
+                items = listOf(
+                    LegendBadge("ADMIN", EmeraldPass, "Full school, exam & student control"),
+                    LegendBadge("TEACHER", AmberPending, "Marks & reports for assigned classes"),
+                    LegendBadge("Edit Exam", EducatorsBlue, "Rename, reorder or customize exam")
+                )
+            )
+        }
+
         // 1. Account & Role Access
         item {
             Card(
@@ -320,25 +336,40 @@ fun SettingsScreen(
                         }
 
                         snapshot.examinations.forEach { exam ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                            val sessionLabel = snapshot.sessionsById[exam.sessionId]?.name ?: "Active Session"
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.background,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(exam.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
-                                    Text(
-                                        if (exam.useCustomGrading) "Uses exam-specific grading" else "Uses default grading scale",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(exam.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+                                        Text(
+                                            "${exam.parsedExamType().label} • $sessionLabel • " +
+                                                if (exam.useCustomGrading) "Custom grading" else "Default grading",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { editingExam = exam },
+                                        modifier = Modifier.testTag("edit_exam_${exam.id}")
+                                    ) {
+                                        Icon(Icons.Default.Edit, contentDescription = "Edit ${exam.name}", tint = EducatorsBlue)
+                                    }
+                                    Switch(
+                                        checked = exam.useCustomGrading,
+                                        onCheckedChange = {
+                                            viewModel.toggleExamCustomGrading(snapshot.campus.id, exam.id, it)
+                                        }
                                     )
                                 }
-                                Switch(
-                                    checked = exam.useCustomGrading,
-                                    onCheckedChange = {
-                                        viewModel.toggleExamCustomGrading(snapshot.campus.id, exam.id, it)
-                                    }
-                                )
                             }
                         }
                     }
@@ -556,40 +587,51 @@ fun SettingsScreen(
     }
 
     if (showAddExamDialog) {
-        var name by remember { mutableStateOf("") }
-        var examType by remember { mutableStateOf(ExamType.MIDTERM) }
-        var customGrading by remember { mutableStateOf(false) }
-        AlertDialog(
-            onDismissRequest = { showAddExamDialog = false },
-            title = { Text("New Examination") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Exam Name") }, singleLine = true)
-                    SelectorDropdown(
-                        label = "Exam Type",
-                        selectedText = examType.label,
-                        items = ExamType.entries,
-                        itemLabel = { it.label },
-                        onSelect = { examType = it }
-                    )
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("Use Custom Grading Rules")
-                        Switch(checked = customGrading, onCheckedChange = { customGrading = it })
-                    }
-                }
+        ExamEditorDialog(
+            existing = null,
+            sessions = snapshot.sessions,
+            defaultSessionId = snapshot.selectedSessionId,
+            defaultSortOrder = (snapshot.examinations.size + 1).toLong(),
+            canDelete = false,
+            onDismiss = { showAddExamDialog = false },
+            onSave = { name, examType, sessionId, customGrading, sortOrder ->
+                viewModel.addExamination(
+                    campus = snapshot.campus,
+                    sessionId = sessionId,
+                    name = name,
+                    examType = examType,
+                    useCustomGrading = customGrading,
+                    sortOrder = sortOrder
+                )
+                showAddExamDialog = false
+            }
+        )
+    }
+
+    editingExam?.let { target ->
+        ExamEditorDialog(
+            existing = target,
+            sessions = snapshot.sessions,
+            defaultSessionId = snapshot.selectedSessionId,
+            defaultSortOrder = target.sortOrder,
+            canDelete = snapshot.examinations.size > 1,
+            onDismiss = { editingExam = null },
+            onSave = { name, examType, sessionId, customGrading, sortOrder ->
+                viewModel.updateExamination(
+                    campusId = snapshot.campus.id,
+                    examId = target.id,
+                    sessionId = sessionId,
+                    name = name,
+                    examType = examType,
+                    useCustomGrading = customGrading,
+                    sortOrder = sortOrder
+                )
+                editingExam = null
             },
-            confirmButton = {
-                Button(onClick = {
-                    if (name.isNotBlank() && snapshot.selectedSessionId.isNotBlank()) {
-                        viewModel.addExamination(
-                            snapshot.campus, snapshot.selectedSessionId, name, examType, customGrading,
-                            (snapshot.examinations.size + 1).toLong()
-                        )
-                        showAddExamDialog = false
-                    }
-                }) { Text("Create") }
-            },
-            dismissButton = { TextButton(onClick = { showAddExamDialog = false }) { Text("Cancel") } }
+            onDelete = {
+                viewModel.deleteExamination(snapshot.campus.id, target.id)
+                editingExam = null
+            }
         )
     }
 
