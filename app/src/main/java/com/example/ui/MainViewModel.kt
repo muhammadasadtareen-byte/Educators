@@ -7,6 +7,7 @@ import com.example.data.model.AcademicSession
 import com.example.data.model.Campus
 import com.example.data.model.ClassPerformanceStats
 import com.example.data.model.ClassSection
+import com.example.data.model.ExamComponent
 import com.example.data.model.ExamType
 import com.example.data.model.Examination
 import com.example.data.model.GradingRule
@@ -234,7 +235,7 @@ class MainViewModel(
                 classes = core.classes.sortedBy { it.sortOrder },
                 sections = acad.sections.sortedBy { it.name },
                 subjects = acad.subjects.sortedWith(compareBy<Subject> { it.sortOrder }.thenBy { it.name }),
-                students = acad.students.sortedBy { it.rollNumber },
+                students = acad.students.sortedWith(compareBy<Student> { it.rollNumber.toIntOrNull() ?: Int.MAX_VALUE }.thenBy { it.rollNumber }.thenBy { it.name }),
                 marks = acad.marks,
                 gradingRules = acad.rules.sortedBy { it.sortOrder },
                 resultRecords = ctrl.records,
@@ -284,13 +285,16 @@ class MainViewModel(
         campus: Campus,
         schoolName: String,
         campusName: String,
+        address: String = campus.address,
+        contact: String = campus.contact,
+        studentEntryFields: List<String> = campus.studentEntryFields,
         allowDecimalMarks: Boolean,
         activeSessionId: String,
         activeExamId: String,
         logoBase64: String?
     ) = runMutation("Campus settings saved.") {
         repository.updateCampusSettings(
-            campus, schoolName, campusName, allowDecimalMarks, activeSessionId, activeExamId, logoBase64
+            campus, schoolName, campusName, address, contact, studentEntryFields, allowDecimalMarks, activeSessionId, activeExamId, logoBase64
         )
     }
 
@@ -304,9 +308,21 @@ class MainViewModel(
         name: String,
         examType: ExamType,
         useCustomGrading: Boolean,
-        sortOrder: Long
-    ) = runMutation("Examination added.") {
-        repository.addExamination(campus, sessionId, name, examType, useCustomGrading, sortOrder)
+        sortOrder: Long,
+        components: List<ExamComponent> = emptyList(),
+        selectAfterCreate: Boolean = true
+    ) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            val res = repository.addExamination(campus, sessionId, name, examType, useCustomGrading, sortOrder, components)
+            _isBusy.value = false
+            res.onSuccess { newId ->
+                if (selectAfterCreate) _selectedExamId.value = newId
+                _actionMessage.value = "Examination '$name' added."
+            }.onFailure {
+                _actionMessage.value = it.message ?: "Failed to add examination."
+            }
+        }
     }
 
     fun toggleExamCustomGrading(campusId: String, examId: String, useCustom: Boolean) = runMutation {
@@ -320,9 +336,10 @@ class MainViewModel(
         name: String,
         examType: ExamType,
         useCustomGrading: Boolean,
-        sortOrder: Long
+        sortOrder: Long,
+        components: List<ExamComponent> = emptyList()
     ) = runMutation("Examination updated.") {
-        repository.updateExamination(campusId, examId, sessionId, name, examType, useCustomGrading, sortOrder)
+        repository.updateExamination(campusId, examId, sessionId, name, examType, useCustomGrading, sortOrder, components)
     }
 
     fun deleteExamination(campusId: String, examId: String) = runMutation("Examination deleted.") {
@@ -417,9 +434,10 @@ class MainViewModel(
         student: Student,
         subject: Subject,
         obtainedMarks: Double,
-        existingMark: MarkEntry?
+        existingMark: MarkEntry?,
+        componentMarks: Map<String, Double> = emptyMap()
     ): Result<Unit> {
-        return repository.saveMarkEntry(campus, sessionId, examId, student, subject, obtainedMarks, existingMark)
+        return repository.saveMarkEntry(campus, sessionId, examId, student, subject, obtainedMarks, existingMark, componentMarks)
     }
 
     fun saveTeacherRemarks(

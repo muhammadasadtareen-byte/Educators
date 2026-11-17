@@ -5,6 +5,7 @@ import com.example.R
 import com.example.data.model.AcademicSession
 import com.example.data.model.Campus
 import com.example.data.model.ClassSection
+import com.example.data.model.ExamComponent
 import com.example.data.model.ExamType
 import com.example.data.model.Examination
 import com.example.data.model.GradingRule
@@ -14,6 +15,7 @@ import com.example.data.model.SchoolClass
 import com.example.data.model.StaffMember
 import com.example.data.model.StaffRole
 import com.example.data.model.Student
+import com.example.data.model.StudentEntryField
 import com.example.data.model.StudentResultSummary
 import com.example.data.model.Subject
 import com.example.data.model.UserProfile
@@ -130,6 +132,9 @@ class SchoolRepository(
                     "memberUids" to members,
                     "schoolName" to "THE EDUCATORS",
                     "campusName" to "ABBOTTABAD MAIN CAMPUS",
+                    "address" to "",
+                    "contact" to "",
+                    "studentEntryFields" to StudentEntryField.defaultOptionalFields,
                     "activeSessionId" to sessionId,
                     "activeExamId" to examMidtermId,
                     "allowDecimalMarks" to true,
@@ -287,6 +292,9 @@ class SchoolRepository(
         campus: Campus,
         schoolName: String,
         campusName: String,
+        address: String,
+        contact: String,
+        studentEntryFields: List<String>,
         allowDecimalMarks: Boolean,
         activeSessionId: String,
         activeExamId: String,
@@ -298,6 +306,9 @@ class SchoolRepository(
             val payload = mutableMapOf<String, Any>(
                 "schoolName" to schoolName.trim().take(120),
                 "campusName" to campusName.trim().take(120),
+                "address" to address.trim().take(200),
+                "contact" to contact.trim().take(80),
+                "studentEntryFields" to studentEntryFields.take(10),
                 "allowDecimalMarks" to allowDecimalMarks,
                 "activeSessionId" to activeSessionId,
                 "activeExamId" to activeExamId,
@@ -341,14 +352,31 @@ class SchoolRepository(
         }
     }
 
+    private fun serializeExamComponents(components: List<ExamComponent>): List<Map<String, Any>> {
+        return components
+            .filter { it.name.isNotBlank() }
+            .take(10)
+            .mapIndexed { idx, c ->
+                val cleanId = c.id.trim().ifBlank { "comp_${idx + 1}" }
+                    .replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
+                    .take(40)
+                mapOf(
+                    "id" to cleanId,
+                    "name" to c.name.trim().take(60),
+                    "maxMarks" to c.maxMarks.coerceIn(0.0, 1000.0)
+                )
+            }
+    }
+
     suspend fun addExamination(
         campus: Campus,
         sessionId: String,
         name: String,
         examType: ExamType,
         useCustomGrading: Boolean,
-        sortOrder: Long
-    ): Result<Unit> {
+        sortOrder: Long,
+        components: List<ExamComponent> = emptyList()
+    ): Result<String> {
         val id = shortId("exam")
         val ref = campusDoc(campus.id).collection("examinations").document(id)
         return try {
@@ -361,11 +389,12 @@ class SchoolRepository(
                 "examType" to examType.name,
                 "useCustomGrading" to useCustomGrading,
                 "sortOrder" to sortOrder,
+                "components" to serializeExamComponents(components),
                 "createdAt" to FieldValue.serverTimestamp(),
                 "updatedAt" to FieldValue.serverTimestamp()
             )
             ref.set(payload).await()
-            Result.success(Unit)
+            Result.success(id)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -400,7 +429,8 @@ class SchoolRepository(
         name: String,
         examType: ExamType,
         useCustomGrading: Boolean,
-        sortOrder: Long
+        sortOrder: Long,
+        components: List<ExamComponent> = emptyList()
     ): Result<Unit> {
         val ref = campusDoc(campusId).collection("examinations").document(examId)
         return try {
@@ -413,6 +443,7 @@ class SchoolRepository(
                     "examType" to examType.name,
                     "useCustomGrading" to useCustomGrading,
                     "sortOrder" to sortOrder.coerceIn(0L, 1000L),
+                    "components" to serializeExamComponents(components),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
             ).await()
@@ -790,9 +821,9 @@ class SchoolRepository(
                 val batch = db.batch()
                 chunk.forEachIndexed { idx, d ->
                     val safeName = d.name.trim().ifBlank { "Student ${idx + 1}" }.take(100)
-                    val safeFather = d.fatherName.trim().ifBlank { "-" }.take(100)
-                    val safeRoll = d.rollNumber.trim().ifBlank { "${idx + 1}" }.take(30)
-                    val safeAdm = d.admissionNumber.trim().ifBlank { "ADM-$safeRoll" }.take(40)
+                    val safeFather = d.fatherName.trim().take(100)
+                    val safeRoll = d.rollNumber.trim().take(30)
+                    val safeAdm = d.admissionNumber.trim().take(40)
                     batch.set(
                         col.document(shortId("stu")),
                         mapOf(
@@ -850,7 +881,8 @@ class SchoolRepository(
         student: Student,
         subject: Subject,
         obtainedMarks: Double,
-        existingMark: MarkEntry?
+        existingMark: MarkEntry?,
+        componentMarks: Map<String, Double> = emptyMap()
     ): Result<Unit> {
         val markId = deterministicMarkId(sessionId, examId, student.id, subject.id)
         val ref = campusDoc(campus.id).collection("marks").document(markId)
@@ -859,6 +891,12 @@ class SchoolRepository(
             require(obtainedMarks in 0.0..subject.maxMarks) {
                 "Obtained marks must be between 0 and ${subject.maxMarks}"
             }
+            val cleanCompMarks = componentMarks
+                .filterKeys { it.isNotBlank() }
+                .filterValues { it >= 0.0 }
+                .entries
+                .take(10)
+                .associate { it.key to it.value }
             if (existingMark == null) {
                 ref.set(
                     mapOf(
@@ -871,6 +909,7 @@ class SchoolRepository(
                         "studentId" to student.id,
                         "subjectId" to subject.id,
                         "obtainedMarks" to obtainedMarks,
+                        "componentMarks" to cleanCompMarks,
                         "enteredByUid" to uid,
                         "createdAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
@@ -882,6 +921,7 @@ class SchoolRepository(
                         "classId" to student.classId,
                         "sectionId" to student.sectionId,
                         "obtainedMarks" to obtainedMarks,
+                        "componentMarks" to cleanCompMarks,
                         "enteredByUid" to uid,
                         "updatedAt" to FieldValue.serverTimestamp()
                     )

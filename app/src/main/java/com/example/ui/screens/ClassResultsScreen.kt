@@ -4,11 +4,15 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,7 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -45,10 +49,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.model.Examination
 import com.example.data.model.ResultStatus
 import com.example.data.model.StudentResultSummary
+import com.example.data.model.Subject
 import com.example.domain.PdfReportGenerator
 import com.example.domain.ResultCalculator
 import com.example.domain.XlsxEngine
@@ -57,14 +66,15 @@ import com.example.ui.SchoolSnapshot
 import com.example.ui.theme.AmberPending
 import com.example.ui.theme.CrimsonFail
 import com.example.ui.theme.EducatorsBlue
-import com.example.ui.theme.EducatorsNavy
 import com.example.ui.theme.EmeraldPass
 import java.io.File
 
+private val SheetTeal = Color(0xFF0B4F6C)
+
 private enum class ResultSort(val label: String) {
+    ROLL("Roll / Name"),
     POSITION("Position"),
-    PERCENTAGE("Percentage"),
-    ROLL("Roll No")
+    PERCENTAGE("Percentage")
 }
 
 private enum class ResultFilter(val label: String) {
@@ -92,8 +102,11 @@ fun ClassResultsScreen(
     var filterBy by remember { mutableStateOf(ResultFilter.ALL) }
 
     val classSubjects = remember(snapshot.subjects, selectedClassId) {
-        snapshot.subjects.filter { it.classId == selectedClassId }
+        snapshot.subjects
+            .filter { it.classId == selectedClassId }
+            .sortedWith(compareBy<Subject> { it.sortOrder }.thenBy { it.name })
     }
+    val examComponents = snapshot.selectedExam?.components.orEmpty()
 
     val filteredSummaries = remember(
         snapshot.allStudentSummaries,
@@ -121,25 +134,28 @@ fun ClassResultsScreen(
         when (sortBy) {
             ResultSort.ROLL -> base.sortedWith(
                 compareBy<StudentResultSummary> { it.student.rollNumber.toIntOrNull() ?: Int.MAX_VALUE }
-                    .thenBy { it.student.rollNumber }
+                    .thenBy { it.student.name }
             )
             ResultSort.PERCENTAGE -> base.sortedByDescending { it.overallPercentage }
             ResultSort.POSITION -> base.sortedWith(
                 compareBy<StudentResultSummary> { it.position ?: Int.MAX_VALUE }
                     .thenByDescending { it.overallPercentage }
+                    .thenBy { it.student.name }
             )
         }
     }
 
     var pendingSaveFile by remember { mutableStateOf<File?>(null) }
     var editingExam by remember { mutableStateOf<Examination?>(null) }
+    var showCreateExamDialog by remember { mutableStateOf(false) }
+
     val savePdfLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/pdf")
     ) { uri ->
         val src = pendingSaveFile
         if (uri != null && src != null) {
             context.contentResolver.openOutputStream(uri)?.use { out -> src.inputStream().use { it.copyTo(out) } }
-            viewModel.postMessage("Class Result Sheet PDF saved.")
+            viewModel.postMessage("Consolidated Sheet PDF saved.")
         }
         pendingSaveFile = null
     }
@@ -149,7 +165,7 @@ fun ClassResultsScreen(
         val src = pendingSaveFile
         if (uri != null && src != null) {
             context.contentResolver.openOutputStream(uri)?.use { out -> src.inputStream().use { it.copyTo(out) } }
-            viewModel.postMessage("Class Result Sheet Excel saved.")
+            viewModel.postMessage("Consolidated Sheet Excel saved.")
         }
         pendingSaveFile = null
     }
@@ -161,13 +177,13 @@ fun ClassResultsScreen(
     ) {
         Spacer(Modifier.height(10.dp))
         TabLegendCard(
-            tabTitle = "Class Results",
-            summary = "Unified class mark sheet ranked by position. Swipe table sideways for all subjects.",
+            tabTitle = "Consolidated Sheet",
+            summary = "Official class Consolidated Sheet matching PDF & Excel formats. Swipe table sideways to view all subjects & components.",
             items = listOf(
-                LegendBadge("Pass", EmeraldPass, "Cleared exam"),
-                LegendBadge("Fail / Red", CrimsonFail, "Failed exam or subject"),
+                LegendBadge("Pass", EmeraldPass, "Cleared all compulsory subjects"),
+                LegendBadge("Fail / Red", CrimsonFail, "Failed subject or overall"),
                 LegendBadge("Pending", AmberPending, "Awaiting remaining marks"),
-                LegendBadge("Pos", EducatorsBlue, "Class rank")
+                LegendBadge("Edit Exam", EducatorsBlue, "Tap pencil or dropdown to edit components")
             )
         )
         Spacer(Modifier.height(8.dp))
@@ -175,7 +191,8 @@ fun ClassResultsScreen(
             snapshot = snapshot,
             onSelectSession = { viewModel.selectSession(it) },
             onSelectExam = { viewModel.selectExam(it) },
-            onEditSelectedExam = { editingExam = it }
+            onEditSelectedExam = { editingExam = it },
+            onCreateExam = { showCreateExamDialog = true }
         )
         Spacer(Modifier.height(8.dp))
 
@@ -191,7 +208,7 @@ fun ClassResultsScreen(
                 },
                 modifier = Modifier.weight(1f)
             )
-            val secOptions = listOf("ALL" to "All Sections") + sectionsForClass.map { it.id to "Section ${it.name}" }
+            val secOptions = listOf("ALL" to "All Sections") + sectionsForClass.map { it.id to it.name }
             SelectorDropdown(
                 label = "Section",
                 selectedText = secOptions.firstOrNull { it.first == selectedSectionId }?.second ?: "All Sections",
@@ -216,7 +233,6 @@ fun ClassResultsScreen(
 
         Spacer(Modifier.height(8.dp))
 
-        // Sort & Filter Chips
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -241,21 +257,32 @@ fun ClassResultsScreen(
 
         Spacer(Modifier.height(8.dp))
 
+        val className = snapshot.classesById[selectedClassId]?.name ?: "Class"
+        val sectionLabel = if (selectedSectionId == "ALL") {
+            "All Sections"
+        } else {
+            snapshot.sectionsById[selectedSectionId]?.name ?: "Section"
+        }
+        val examName = snapshot.selectedExam?.name ?: "Examination"
+
         if (filteredSummaries.isNotEmpty()) {
-            val className = snapshot.classesById[selectedClassId]?.name ?: "Class"
-            val sectionLabel = if (selectedSectionId == "ALL") "All Sections" else "Section ${snapshot.sectionsById[selectedSectionId]?.name ?: ""}"
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(
                     onClick = {
                         val bytes = XlsxEngine.exportCompleteClassResultSheet(
                             className = className,
                             sectionLabel = sectionLabel,
-                            examName = snapshot.selectedExam?.name ?: "Exam",
+                            examName = examName,
                             sessionName = snapshot.selectedSession?.name ?: "Session",
                             subjects = classSubjects,
-                            summaries = filteredSummaries
+                            summaries = filteredSummaries,
+                            schoolName = snapshot.campus.schoolName,
+                            campusName = snapshot.campus.campusName,
+                            address = snapshot.campus.address,
+                            contact = snapshot.campus.contact,
+                            examComponents = examComponents
                         )
-                        val file = FileExportHelper.writeBytesToCache(context, "ClassResult_${className}.xlsx", bytes)
+                        val file = FileExportHelper.writeBytesToCache(context, "Consolidated_Sheet_${className}.xlsx", bytes)
                         pendingSaveFile = file
                         saveXlsxLauncher.launch(file.name)
                     },
@@ -274,10 +301,13 @@ fun ClassResultsScreen(
                             schoolLogoBase64 = snapshot.campus.logoBase64,
                             className = className,
                             sectionLabel = sectionLabel,
-                            examName = snapshot.selectedExam?.name ?: "Exam",
+                            examName = examName,
                             sessionName = snapshot.selectedSession?.name ?: "Session",
                             subjects = classSubjects,
-                            summaries = filteredSummaries
+                            summaries = filteredSummaries,
+                            address = snapshot.campus.address,
+                            contact = snapshot.campus.contact,
+                            examComponents = examComponents
                         )
                         pendingSaveFile = file
                         savePdfLauncher.launch(file.name)
@@ -296,70 +326,234 @@ fun ClassResultsScreen(
             EmptyStateCard(
                 icon = Icons.Default.Assessment,
                 title = "No Class Results Available",
-                description = "No matching students found for this filter. Add students and enter marks to view the class result sheet."
+                description = "No matching students found for this filter. Add students and enter marks to view the Consolidated Sheet."
             )
         } else {
-            // Horizontally scrollable unified class result table + card rows
             val hScroll = rememberScrollState()
+            val totalMax = classSubjects.sumOf { it.maxMarks }
+            val useComponents = examComponents.isNotEmpty() && classSubjects.isNotEmpty()
+
+            val nameColW = 138.dp
+            val compColW = 82.dp
+            val singleSubW = 86.dp
+            val obtColW = 72.dp
+            val pctColW = 60.dp
+            val gradeColW = 52.dp
+            val posColW = 48.dp
+
             Card(
                 shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                border = BorderStroke(1.5.dp, SheetTeal),
                 modifier = Modifier.fillMaxSize()
             ) {
                 Column(modifier = Modifier.fillMaxSize()) {
-                    // Header
+                    // Consolidated Sheet Document Header Banner
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFFF8FAFC))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = snapshot.campus.schoolName.uppercase(),
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                            color = SheetTeal,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            text = snapshot.campus.campusName.uppercase(),
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                            color = SheetTeal,
+                            textAlign = TextAlign.Center
+                        )
+                        if (snapshot.campus.address.isNotBlank()) {
+                            Text(
+                                text = "Address: ${snapshot.campus.address}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SheetTeal,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                        if (snapshot.campus.contact.isNotBlank()) {
+                            Text(
+                                text = "Contact: ${snapshot.campus.contact}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SheetTeal,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "Consolidated Sheet",
+                            style = MaterialTheme.typography.titleSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                textDecoration = TextDecoration.Underline
+                            ),
+                            color = SheetTeal,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            text = "$className - $sectionLabel *** ${examName.uppercase()}",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = SheetTeal,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+
+                    HorizontalDivider(color = SheetTeal, thickness = 1.dp)
+
+                    // 2-Row Grouped Table Header (matching Consolidated Sheet PDF & Excel)
                     Row(
                         modifier = Modifier
                             .horizontalScroll(hScroll)
-                            .background(EducatorsNavy)
-                            .padding(horizontal = 10.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .height(IntrinsicSize.Min)
+                            .background(SheetTeal)
                     ) {
-                        HeaderCell("Roll", 54)
-                        HeaderCell("Student Name", 140)
-                        classSubjects.forEach { sub ->
-                            HeaderCell(sub.name.take(9), 72)
+                        if (useComponents) {
+                            SheetHeaderBox("Name", nameColW, Modifier.fillMaxHeight(), Alignment.CenterStart)
+                            classSubjects.forEach { sub ->
+                                val groupW = compColW * examComponents.size
+                                Column(
+                                    modifier = Modifier
+                                        .width(groupW)
+                                        .border(0.5.dp, Color.White.copy(alpha = 0.6f))
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(28.dp)
+                                            .border(0.5.dp, Color.White.copy(alpha = 0.5f))
+                                            .padding(horizontal = 4.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = sub.name,
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = Color.White,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                    Row(modifier = Modifier.fillMaxWidth()) {
+                                        examComponents.forEach { comp ->
+                                            Box(
+                                                modifier = Modifier
+                                                    .width(compColW)
+                                                    .height(34.dp)
+                                                    .border(0.5.dp, Color.White.copy(alpha = 0.5f))
+                                                    .padding(horizontal = 3.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = "${comp.name} (${ResultCalculator.formatMarks(comp.maxMarks)})",
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 11.sp),
+                                                    color = Color.White,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    textAlign = TextAlign.Center
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            SheetHeaderBox("Obt. (${ResultCalculator.formatMarks(totalMax)})", obtColW, Modifier.fillMaxHeight(), Alignment.Center)
+                            SheetHeaderBox("% age", pctColW, Modifier.fillMaxHeight(), Alignment.Center)
+                            SheetHeaderBox("Grade", gradeColW, Modifier.fillMaxHeight(), Alignment.Center)
+                            SheetHeaderBox("Pos", posColW, Modifier.fillMaxHeight(), Alignment.Center)
+                        } else {
+                            SheetHeaderBox("Name", nameColW, Modifier.height(42.dp), Alignment.CenterStart)
+                            classSubjects.forEach { sub ->
+                                SheetHeaderBox(
+                                    "${sub.name} (${ResultCalculator.formatMarks(sub.maxMarks)})",
+                                    singleSubW,
+                                    Modifier.height(42.dp),
+                                    Alignment.Center
+                                )
+                            }
+                            SheetHeaderBox("Obt. (${ResultCalculator.formatMarks(totalMax)})", obtColW, Modifier.height(42.dp), Alignment.Center)
+                            SheetHeaderBox("% age", pctColW, Modifier.height(42.dp), Alignment.Center)
+                            SheetHeaderBox("Grade", gradeColW, Modifier.height(42.dp), Alignment.Center)
+                            SheetHeaderBox("Pos", posColW, Modifier.height(42.dp), Alignment.Center)
                         }
-                        HeaderCell("Total", 66)
-                        HeaderCell("Obtained", 74)
-                        HeaderCell("%", 68)
-                        HeaderCell("Grade", 58)
-                        HeaderCell("Pos", 56)
-                        HeaderCell("Status", 82)
                     }
 
+                    // Data Rows
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        items(filteredSummaries, key = { it.student.id }) { s ->
+                        itemsIndexed(filteredSummaries, key = { _, s -> s.student.id }) { idx, s ->
+                            val rowBg = if (idx % 2 == 1) Color(0xFFF8FAFC) else Color.White
                             Row(
                                 modifier = Modifier
                                     .horizontalScroll(hScroll)
-                                    .padding(horizontal = 10.dp, vertical = 10.dp),
+                                    .background(rowBg)
+                                    .height(IntrinsicSize.Min),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                BodyCell(s.student.rollNumber, 54, bold = true)
-                                BodyCell(s.student.name, 140, bold = true)
-                                classSubjects.forEach { sub ->
-                                    val sr = s.subjectResults.firstOrNull { it.subject.id == sub.id }
-                                    BodyCell(
-                                        text = sr?.obtainedMarks?.let { ResultCalculator.formatMarks(it) } ?: "-",
-                                        widthDp = 72,
-                                        color = if (sr?.passed == false) CrimsonFail else MaterialTheme.colorScheme.onSurface
-                                    )
+                                SheetBodyBox(
+                                    text = s.student.name,
+                                    width = nameColW,
+                                    alignment = Alignment.CenterStart,
+                                    bold = true
+                                )
+                                if (useComponents) {
+                                    classSubjects.forEach { sub ->
+                                        val sr = s.subjectResults.firstOrNull { it.subject.id == sub.id }
+                                        examComponents.forEach { comp ->
+                                            val compVal = sr?.markEntry?.componentMarks?.get(comp.id)
+                                            SheetBodyBox(
+                                                text = compVal?.let { ResultCalculator.formatMarks(it) } ?: "-",
+                                                width = compColW,
+                                                alignment = Alignment.Center,
+                                                color = if (sr?.passed == false) CrimsonFail else Color(0xFF0F172A)
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    classSubjects.forEach { sub ->
+                                        val sr = s.subjectResults.firstOrNull { it.subject.id == sub.id }
+                                        SheetBodyBox(
+                                            text = sr?.obtainedMarks?.let { ResultCalculator.formatMarks(it) } ?: "-",
+                                            width = singleSubW,
+                                            alignment = Alignment.Center,
+                                            color = if (sr?.passed == false) CrimsonFail else Color(0xFF0F172A)
+                                        )
+                                    }
                                 }
-                                BodyCell(ResultCalculator.formatMarks(s.totalMaxMarks), 66)
-                                BodyCell(ResultCalculator.formatMarks(s.totalObtainedMarks), 74, bold = true)
-                                BodyCell(ResultCalculator.formatPercentage(s.overallPercentage), 68)
-                                BodyCell(s.overallGrade, 58, bold = true)
-                                BodyCell(ResultCalculator.formatOrdinal(s.position), 56, bold = true)
-                                val (stLabel, stColor) = when {
-                                    s.status == ResultStatus.INCOMPLETE -> "Pending" to AmberPending
-                                    s.passed -> "Pass" to EmeraldPass
-                                    else -> "Fail" to CrimsonFail
+                                SheetBodyBox(
+                                    text = ResultCalculator.formatMarks(s.totalObtainedMarks),
+                                    width = obtColW,
+                                    alignment = Alignment.Center,
+                                    bold = true
+                                )
+                                SheetBodyBox(
+                                    text = ResultCalculator.formatPercentage(s.overallPercentage),
+                                    width = pctColW,
+                                    alignment = Alignment.Center
+                                )
+                                val gradeColor = when {
+                                    s.status == ResultStatus.INCOMPLETE -> AmberPending
+                                    s.passed -> EmeraldPass
+                                    else -> CrimsonFail
                                 }
-                                BodyCell(stLabel, 82, bold = true, color = stColor)
+                                SheetBodyBox(
+                                    text = s.overallGrade,
+                                    width = gradeColW,
+                                    alignment = Alignment.Center,
+                                    bold = true,
+                                    color = gradeColor
+                                )
+                                SheetBodyBox(
+                                    text = ResultCalculator.formatOrdinal(s.position),
+                                    width = posColW,
+                                    alignment = Alignment.Center,
+                                    bold = true,
+                                    color = EducatorsBlue
+                                )
                             }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                            HorizontalDivider(color = Color(0xFFCBD5E1), thickness = 0.6.dp)
                         }
                     }
                 }
@@ -375,7 +569,7 @@ fun ClassResultsScreen(
             defaultSortOrder = target.sortOrder,
             canDelete = snapshot.examinations.size > 1,
             onDismiss = { editingExam = null },
-            onSave = { name, examType, sessionId, useCustomGrading, sortOrder ->
+            onSave = { name, examType, sessionId, useCustomGrading, sortOrder, components ->
                 viewModel.updateExamination(
                     campusId = snapshot.campus.id,
                     examId = target.id,
@@ -383,7 +577,8 @@ fun ClassResultsScreen(
                     name = name,
                     examType = examType,
                     useCustomGrading = useCustomGrading,
-                    sortOrder = sortOrder
+                    sortOrder = sortOrder,
+                    components = components
                 )
                 editingExam = null
             },
@@ -393,33 +588,81 @@ fun ClassResultsScreen(
             }
         )
     }
+
+    if (showCreateExamDialog) {
+        ExamEditorDialog(
+            existing = null,
+            sessions = snapshot.sessions,
+            defaultSessionId = snapshot.selectedSessionId,
+            defaultSortOrder = (snapshot.examinations.maxOfOrNull { it.sortOrder } ?: 0L) + 1L,
+            canDelete = false,
+            onDismiss = { showCreateExamDialog = false },
+            onSave = { name, examType, sessionId, useCustomGrading, sortOrder, components ->
+                viewModel.addExamination(
+                    campus = snapshot.campus,
+                    sessionId = sessionId,
+                    name = name,
+                    examType = examType,
+                    useCustomGrading = useCustomGrading,
+                    sortOrder = sortOrder,
+                    components = components
+                )
+                showCreateExamDialog = false
+            }
+        )
+    }
 }
 
 @Composable
-private fun HeaderCell(text: String, widthDp: Int) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-        color = Color.White,
-        maxLines = 1,
-        modifier = Modifier.width(widthDp.dp)
-    )
-}
-
-@Composable
-private fun BodyCell(
+private fun SheetHeaderBox(
     text: String,
-    widthDp: Int,
-    bold: Boolean = false,
-    color: Color = MaterialTheme.colorScheme.onSurface
+    width: androidx.compose.ui.unit.Dp,
+    modifier: Modifier = Modifier,
+    alignment: Alignment = Alignment.Center
 ) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodySmall.copy(
-            fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal
-        ),
-        color = color,
-        maxLines = 1,
-        modifier = Modifier.width(widthDp.dp)
-    )
+    Box(
+        modifier = modifier
+            .width(width)
+            .border(0.5.dp, Color.White.copy(alpha = 0.55f))
+            .padding(horizontal = 4.dp, vertical = 4.dp),
+        contentAlignment = alignment
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+            color = Color.White,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = if (alignment == Alignment.CenterStart) TextAlign.Start else TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun SheetBodyBox(
+    text: String,
+    width: androidx.compose.ui.unit.Dp,
+    alignment: Alignment = Alignment.Center,
+    bold: Boolean = false,
+    color: Color = Color(0xFF0F172A)
+) {
+    Box(
+        modifier = Modifier
+            .width(width)
+            .height(38.dp)
+            .border(0.5.dp, Color(0xFFE2E8F0))
+            .padding(horizontal = 6.dp),
+        contentAlignment = alignment
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal
+            ),
+            color = color,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = if (alignment == Alignment.CenterStart) TextAlign.Start else TextAlign.Center
+        )
+    }
 }

@@ -4,6 +4,7 @@ import android.util.Xml
 import com.example.data.model.AcademicSession
 import com.example.data.model.ClassPerformanceStats
 import com.example.data.model.ClassSection
+import com.example.data.model.ExamComponent
 import com.example.data.model.ImportPreviewResult
 import com.example.data.model.ImportRowError
 import com.example.data.model.ResultStatus
@@ -21,15 +22,20 @@ import java.util.zip.ZipOutputStream
 sealed interface CellValue {
     data class Text(val value: String) : CellValue
     data class Number(val value: Double) : CellValue
-    data class Percent(val ratio: Double) : CellValue // e.g. 0.85 displays as 85.00%
+    data class Percent(val ratio: Double) : CellValue // e.g. 0.325 displays as 32.5%
 }
 
 data class XlsxSheetData(
     val name: String,
     val titleRow: String? = null,
     val subtitleRow: String? = null,
+    val extraBannerRows: List<String> = emptyList(),
+    val groupHeaders: List<String>? = null,
+    val groupMergeSpans: List<Pair<Int, Int>> = emptyList(),
+    val verticalMergeCols: List<Int> = emptyList(),
     val headers: List<String>,
-    val rows: List<List<CellValue>>
+    val rows: List<List<CellValue>>,
+    val footerRows: List<List<CellValue>> = emptyList()
 )
 
 data class ImportedStudentDraft(
@@ -67,35 +73,40 @@ data class ImportedSubjectDraft(
 
 object XlsxEngine {
 
-    // --- 5 REQUIRED EXPORTS ---
+    // --- EXPORTS ---
 
     fun exportCompleteStudentList(
         students: List<Student>,
         classesById: Map<String, SchoolClass>,
         sectionsById: Map<String, ClassSection>,
-        sessionsById: Map<String, AcademicSession>
+        sessionsById: Map<String, AcademicSession>,
+        schoolName: String = "THE EDUCATORS",
+        campusName: String = "ABBOTTABAD MAIN CAMPUS"
     ): ByteArray {
         val headers = listOf(
             "Roll Number", "Admission Number", "Student Name", "Father's Name",
             "Class", "Section", "Academic Session"
         )
-        val rows = students.sortedWith(compareBy<Student> { classesById[it.classId]?.sortOrder ?: 99L }.thenBy { it.rollNumber })
-            .map { s ->
-                listOf(
-                    CellValue.Text(s.rollNumber),
-                    CellValue.Text(s.admissionNumber),
-                    CellValue.Text(s.name),
-                    CellValue.Text(s.fatherName),
-                    CellValue.Text(classesById[s.classId]?.name ?: ""),
-                    CellValue.Text(sectionsById[s.sectionId]?.name ?: ""),
-                    CellValue.Text(sessionsById[s.sessionId]?.name ?: "")
-                )
-            }
+        val rows = students.sortedWith(
+            compareBy<Student> { classesById[it.classId]?.sortOrder ?: 99L }
+                .thenBy { it.rollNumber.toIntOrNull() ?: Int.MAX_VALUE }
+                .thenBy { it.name }
+        ).map { s ->
+            listOf(
+                CellValue.Text(s.rollNumber),
+                CellValue.Text(s.admissionNumber),
+                CellValue.Text(s.name),
+                CellValue.Text(s.fatherName.takeIf { it != "-" }.orEmpty()),
+                CellValue.Text(classesById[s.classId]?.name ?: ""),
+                CellValue.Text(sectionsById[s.sectionId]?.name ?: ""),
+                CellValue.Text(sessionsById[s.sessionId]?.name ?: "")
+            )
+        }
         return writeWorkbook(
             listOf(
                 XlsxSheetData(
                     name = "Students",
-                    titleRow = "THE EDUCATORS - ABBOTTABAD MAIN CAMPUS",
+                    titleRow = "$schoolName - $campusName",
                     subtitleRow = "Complete Student Directory",
                     headers = headers,
                     rows = rows
@@ -110,13 +121,18 @@ object XlsxEngine {
         examName: String,
         sessionName: String,
         subject: Subject,
-        summaries: List<StudentResultSummary>
+        summaries: List<StudentResultSummary>,
+        schoolName: String = "THE EDUCATORS",
+        campusName: String = "ABBOTTABAD MAIN CAMPUS"
     ): ByteArray {
         val headers = listOf(
             "Roll No", "Admission No", "Student Name", "Father's Name",
             "Subject", "Max Marks", "Passing Marks", "Obtained Marks", "Percentage", "Grade", "Status"
         )
-        val rows = summaries.sortedBy { it.student.rollNumber }.map { summary ->
+        val rows = summaries.sortedWith(
+            compareBy<StudentResultSummary> { it.student.rollNumber.toIntOrNull() ?: Int.MAX_VALUE }
+                .thenBy { it.student.name }
+        ).map { summary ->
             val sr = summary.subjectResults.firstOrNull { it.subject.id == subject.id }
             val obtainedCell = if (sr?.obtainedMarks != null) CellValue.Number(sr.obtainedMarks) else CellValue.Text("Pending")
             val pctCell = if (sr?.percentage != null) CellValue.Percent(sr.percentage / 100.0) else CellValue.Text("-")
@@ -129,7 +145,7 @@ object XlsxEngine {
                 CellValue.Text(summary.student.rollNumber),
                 CellValue.Text(summary.student.admissionNumber),
                 CellValue.Text(summary.student.name),
-                CellValue.Text(summary.student.fatherName),
+                CellValue.Text(summary.student.fatherName.takeIf { it != "-" }.orEmpty()),
                 CellValue.Text(subject.name),
                 CellValue.Number(subject.maxMarks),
                 CellValue.Number(subject.passingMarks),
@@ -143,7 +159,7 @@ object XlsxEngine {
             listOf(
                 XlsxSheetData(
                     name = sanitizeSheetName(subject.name),
-                    titleRow = "THE EDUCATORS - ABBOTTABAD MAIN CAMPUS",
+                    titleRow = "$schoolName - $campusName",
                     subtitleRow = "$examName ($sessionName) | $className - $sectionName | Subject: ${subject.name}",
                     headers = headers,
                     rows = rows
@@ -152,52 +168,109 @@ object XlsxEngine {
         )
     }
 
-    fun exportIndividualStudentResult(summary: StudentResultSummary): ByteArray {
-        val headers = listOf("Subject", "Compulsory", "Total Marks", "Passing Marks", "Obtained Marks", "Percentage", "Grade", "Status")
+    fun exportIndividualStudentResult(
+        summary: StudentResultSummary,
+        schoolName: String = "THE EDUCATORS",
+        campusName: String = "ABBOTTABAD MAIN CAMPUS",
+        address: String = "",
+        contact: String = ""
+    ): ByteArray {
+        val components = summary.examComponents
+        val headers = buildList {
+            add("Subjects")
+            components.forEach { comp ->
+                add("${comp.name} (${ResultCalculator.formatMarks(comp.maxMarks)})")
+            }
+            add("Total Marks Obtained")
+            add("Highest Marks in Class")
+            add("Percentage")
+            add("Grade")
+        }
+
         val rows = summary.subjectResults.map { sr ->
-            listOf(
-                CellValue.Text(sr.subject.name),
-                CellValue.Text(if (sr.subject.compulsory) "Yes" else "Elective"),
-                CellValue.Number(sr.subject.maxMarks),
-                CellValue.Number(sr.subject.passingMarks),
-                if (sr.obtainedMarks != null) CellValue.Number(sr.obtainedMarks) else CellValue.Text("Pending"),
-                if (sr.percentage != null) CellValue.Percent(sr.percentage / 100.0) else CellValue.Text("-"),
-                CellValue.Text(sr.grade),
-                CellValue.Text(
-                    when (sr.passed) {
-                        true -> "Pass"
-                        false -> "Fail"
-                        null -> "Pending"
+            buildList {
+                add(CellValue.Text(sr.subject.name + if (sr.passed == false && sr.subject.compulsory) " *" else ""))
+                components.forEach { comp ->
+                    val compVal = sr.markEntry?.componentMarks?.get(comp.id)
+                    if (compVal != null) {
+                        add(CellValue.Number(compVal))
+                    } else {
+                        add(CellValue.Text("-"))
                     }
-                )
-            )
+                }
+                if (sr.obtainedMarks != null) {
+                    add(CellValue.Number(sr.obtainedMarks))
+                } else {
+                    add(CellValue.Text("-"))
+                }
+                if (sr.highestMarksInClass != null) {
+                    add(CellValue.Number(sr.highestMarksInClass))
+                } else {
+                    add(CellValue.Text("-"))
+                }
+                if (sr.percentage != null) {
+                    add(CellValue.Percent(sr.percentage / 100.0))
+                } else {
+                    add(CellValue.Text("-"))
+                }
+                add(CellValue.Text(sr.grade))
+            }
         } + listOf(
-            listOf(
-                CellValue.Text("TOTAL / OVERALL"),
-                CellValue.Text(""),
-                CellValue.Number(summary.totalMaxMarks),
-                CellValue.Text(""),
-                CellValue.Number(summary.totalObtainedMarks),
-                CellValue.Percent(summary.overallPercentage / 100.0),
-                CellValue.Text(summary.overallGrade),
-                CellValue.Text(
-                    when {
-                        summary.status == ResultStatus.INCOMPLETE -> "Incomplete (${summary.enteredSubjectCount}/${summary.totalSubjectCount})"
-                        summary.passed -> "PASS (Pos: ${ResultCalculator.formatOrdinal(summary.position)})"
-                        else -> "FAIL"
-                    }
-                )
-            )
+            buildList {
+                add(CellValue.Text("GRAND TOTAL (${ResultCalculator.formatMarks(summary.totalMaxMarks)})"))
+                repeat(components.size) { add(CellValue.Text("")) }
+                add(CellValue.Number(summary.totalObtainedMarks))
+                add(CellValue.Text(""))
+                add(CellValue.Percent(summary.overallPercentage / 100.0))
+                add(CellValue.Text(summary.overallGrade))
+            }
         )
+
+        val particularsLine1 = buildList {
+            add("Student Name: ${summary.student.name}")
+            summary.student.fatherName.takeIf { it.isNotBlank() && it != "-" }?.let { add("Father's Name: $it") }
+            add("Class - Section: ${summary.className} - ${summary.sectionName}")
+            add("Session: ${summary.sessionName}")
+        }.joinToString("   |   ")
+
+        val particularsLine2 = buildList {
+            summary.student.rollNumber.takeIf { it.isNotBlank() }?.let { add("Roll Number: $it") }
+            summary.student.admissionNumber.takeIf { it.isNotBlank() }?.let { add("Admission No: $it") }
+            if (address.isNotBlank()) add("Address: $address")
+            if (contact.isNotBlank()) add("Contact: $contact")
+        }.joinToString("   |   ")
+
+        val extraBanners = buildList {
+            add(particularsLine1)
+            if (particularsLine2.isNotBlank()) add(particularsLine2)
+        }
+
+        val rules = summary.gradingRulesUsed.ifEmpty { ResultCalculator.defaultGradingTemplates() }
+            .sortedByDescending { it.minPercentage }
+
+        val footerRows = buildList {
+            add(listOf(CellValue.Text("")))
+            add(listOf(CellValue.Text("Teacher's Remarks"), CellValue.Text(summary.teacherRemarks)))
+            add(listOf(CellValue.Text("")))
+            add(listOf(CellValue.Text("Class Teacher's Signature"), CellValue.Text(""), CellValue.Text("Dated"), CellValue.Text("")))
+            add(listOf(CellValue.Text("Principal's Signature"), CellValue.Text(""), CellValue.Text("Dated"), CellValue.Text("")))
+            add(listOf(CellValue.Text("Parent/Guardian's Signature"), CellValue.Text(""), CellValue.Text("Dated"), CellValue.Text("")))
+            add(listOf(CellValue.Text("")))
+            add(listOf(CellValue.Text("GRADING KEY")))
+            add(rules.map { CellValue.Text("Grade ${it.grade}") })
+            add(rules.map { CellValue.Text(formatRuleBand(it.minPercentage, it.maxPercentage)) })
+        }
 
         return writeWorkbook(
             listOf(
                 XlsxSheetData(
-                    name = sanitizeSheetName("${summary.student.rollNumber}_${summary.student.name}"),
-                    titleRow = "THE EDUCATORS - ABBOTTABAD MAIN CAMPUS",
-                    subtitleRow = "${summary.student.name} (Roll: ${summary.student.rollNumber}) | ${summary.className}-${summary.sectionName} | ${summary.examName} (${summary.sessionName})",
+                    name = sanitizeSheetName("${summary.student.rollNumber.ifBlank { "Student" }}_${summary.student.name}"),
+                    titleRow = "PROGRESS REPORT — ${schoolName.uppercase()}",
+                    subtitleRow = "${summary.examName.uppercase()} — ${campusName.uppercase()}",
+                    extraBannerRows = extraBanners,
                     headers = headers,
-                    rows = rows
+                    rows = rows,
+                    footerRows = footerRows
                 )
             )
         )
@@ -209,58 +282,113 @@ object XlsxEngine {
         examName: String,
         sessionName: String,
         subjects: List<Subject>,
-        summaries: List<StudentResultSummary>
+        summaries: List<StudentResultSummary>,
+        schoolName: String = "THE EDUCATORS",
+        campusName: String = "ABBOTTABAD MAIN CAMPUS",
+        address: String = "",
+        contact: String = "",
+        examComponents: List<ExamComponent> = emptyList()
     ): ByteArray {
         val sortedSubjects = subjects.sortedWith(compareBy<Subject> { it.sortOrder }.thenBy { it.name })
-        val headers = buildList {
-            add("Roll No")
-            add("Student Name")
-            add("Father's Name")
-            sortedSubjects.forEach { add("${it.name} (${ResultCalculator.formatMarks(it.maxMarks)})") }
-            add("Total Marks")
-            add("Obtained Marks")
-            add("Percentage")
-            add("Grade")
-            add("Position")
-            add("Result Status")
+        val totalMax = sortedSubjects.sumOf { it.maxMarks }
+
+        val groupHeaders: List<String>?
+        val headers: List<String>
+        val groupMergeSpans: List<Pair<Int, Int>>
+        val verticalMergeCols: List<Int>
+
+        if (examComponents.isNotEmpty() && sortedSubjects.isNotEmpty()) {
+            val topList = mutableListOf("Name")
+            val subList = mutableListOf("")
+            val spans = mutableListOf<Pair<Int, Int>>()
+            var colCursor = 1
+
+            sortedSubjects.forEach { sub ->
+                val startCol = colCursor
+                examComponents.forEachIndexed { idx, comp ->
+                    topList.add(if (idx == 0) sub.name else "")
+                    subList.add("${comp.name} (${ResultCalculator.formatMarks(comp.maxMarks)})")
+                    colCursor++
+                }
+                if (examComponents.size > 1) {
+                    spans.add(startCol to (colCursor - 1))
+                }
+            }
+            val obtCol = colCursor
+            topList.add("Obt. (${ResultCalculator.formatMarks(totalMax)})")
+            subList.add("")
+            val pctCol = colCursor + 1
+            topList.add("% age")
+            subList.add("")
+            val gradeCol = colCursor + 2
+            topList.add("Grade")
+            subList.add("")
+
+            groupHeaders = topList
+            headers = subList
+            groupMergeSpans = spans
+            verticalMergeCols = listOf(0, obtCol, pctCol, gradeCol)
+        } else {
+            groupHeaders = null
+            groupMergeSpans = emptyList()
+            verticalMergeCols = emptyList()
+            headers = buildList {
+                add("Name")
+                sortedSubjects.forEach { add("${it.name} (${ResultCalculator.formatMarks(it.maxMarks)})") }
+                add("Obt. (${ResultCalculator.formatMarks(totalMax)})")
+                add("% age")
+                add("Grade")
+            }
         }
 
         val rows = summaries.map { summary ->
             buildList {
-                add(CellValue.Text(summary.student.rollNumber))
                 add(CellValue.Text(summary.student.name))
-                add(CellValue.Text(summary.student.fatherName))
-                sortedSubjects.forEach { sub ->
-                    val sr = summary.subjectResults.firstOrNull { it.subject.id == sub.id }
-                    if (sr?.obtainedMarks != null) {
-                        add(CellValue.Number(sr.obtainedMarks))
-                    } else {
-                        add(CellValue.Text("Pending"))
+                if (examComponents.isNotEmpty()) {
+                    sortedSubjects.forEach { sub ->
+                        val sr = summary.subjectResults.firstOrNull { it.subject.id == sub.id }
+                        examComponents.forEach { comp ->
+                            val compMark = sr?.markEntry?.componentMarks?.get(comp.id)
+                            if (compMark != null) {
+                                add(CellValue.Number(compMark))
+                            } else {
+                                add(CellValue.Text("-"))
+                            }
+                        }
+                    }
+                } else {
+                    sortedSubjects.forEach { sub ->
+                        val sr = summary.subjectResults.firstOrNull { it.subject.id == sub.id }
+                        if (sr?.obtainedMarks != null) {
+                            add(CellValue.Number(sr.obtainedMarks))
+                        } else {
+                            add(CellValue.Text("-"))
+                        }
                     }
                 }
-                add(CellValue.Number(summary.totalMaxMarks))
                 add(CellValue.Number(summary.totalObtainedMarks))
                 add(CellValue.Percent(summary.overallPercentage / 100.0))
                 add(CellValue.Text(summary.overallGrade))
-                add(CellValue.Text(ResultCalculator.formatOrdinal(summary.position)))
-                add(
-                    CellValue.Text(
-                        when {
-                            summary.status == ResultStatus.INCOMPLETE -> "Incomplete"
-                            summary.passed -> "Pass"
-                            else -> "Fail"
-                        }
-                    )
-                )
             }
+        }
+
+        val extraBanners = buildList {
+            if (address.isNotBlank()) add("Address: $address")
+            if (contact.isNotBlank()) add("Contact: $contact")
+            add("Consolidated Sheet")
+            add("$className - $sectionLabel *** $examName ($sessionName)")
         }
 
         return writeWorkbook(
             listOf(
                 XlsxSheetData(
-                    name = sanitizeSheetName("${className}_Results"),
-                    titleRow = "THE EDUCATORS - ABBOTTABAD MAIN CAMPUS",
-                    subtitleRow = "Class Result Sheet | $className ($sectionLabel) | $examName | $sessionName",
+                    name = sanitizeSheetName("${className}_Consolidated"),
+                    titleRow = schoolName.uppercase(),
+                    subtitleRow = campusName.uppercase(),
+                    extraBannerRows = extraBanners,
+                    groupHeaders = groupHeaders,
+                    groupMergeSpans = groupMergeSpans,
+                    verticalMergeCols = verticalMergeCols,
                     headers = headers,
                     rows = rows
                 )
@@ -271,7 +399,9 @@ object XlsxEngine {
     fun exportClassPerformanceSummary(
         examName: String,
         sessionName: String,
-        stats: List<ClassPerformanceStats>
+        stats: List<ClassPerformanceStats>,
+        schoolName: String = "THE EDUCATORS",
+        campusName: String = "ABBOTTABAD MAIN CAMPUS"
     ): ByteArray {
         val headers = listOf(
             "Class", "Total Students", "Results Completed", "Results Pending",
@@ -294,7 +424,7 @@ object XlsxEngine {
             listOf(
                 XlsxSheetData(
                     name = "Class_Summary",
-                    titleRow = "THE EDUCATORS - ABBOTTABAD MAIN CAMPUS",
+                    titleRow = "$schoolName - $campusName",
                     subtitleRow = "Class-wise Performance Summary | $examName | $sessionName",
                     headers = headers,
                     rows = rows
@@ -303,13 +433,21 @@ object XlsxEngine {
         )
     }
 
+    private fun formatRuleBand(minPct: Double, maxPct: Double): String {
+        val minInt = minPct.toInt()
+        val upperInt = if (maxPct >= 99.9) 100 else kotlin.math.ceil(maxPct).toInt().let {
+            if (maxPct % 1.0 > 0.5) (maxPct.toInt() + 1) else maxPct.toInt()
+        }
+        return "$minInt% - $upperInt%"
+    }
+
     // --- 3 TEMPLATE HELPERS FOR CLEAN IMPORT ---
 
     fun generateStudentImportTemplate(): ByteArray = writeWorkbook(
         listOf(
             XlsxSheetData(
                 name = "Students_Import",
-                headers = listOf("Student Name", "Father's Name", "Roll Number", "Admission Number", "Class", "Section", "Academic Session"),
+                headers = listOf("Student Name", "Father's Name (Optional)", "Roll Number (Optional)", "Admission Number (Optional)", "Class", "Section", "Academic Session"),
                 rows = emptyList()
             )
         )
@@ -353,7 +491,7 @@ object XlsxEngine {
         if (headerIdx < 0) {
             return ImportPreviewResult(
                 emptyList(),
-                listOf(ImportRowError(1, "Missing required header 'Student Name'. Expected columns: Student Name, Father's Name, Roll Number, Admission Number, Class, Section, Academic Session."))
+                listOf(ImportRowError(1, "Missing required header 'Student Name'. Expected columns: Student Name, Class (Father's Name, Roll Number, Admission Number, Section, Session are optional)."))
             )
         }
 
@@ -366,32 +504,36 @@ object XlsxEngine {
         val sectionCol = findCol(headers, "section", "sec")
         val sessionCol = findCol(headers, "academic session", "session")
 
-        if (nameCol < 0 || fatherCol < 0 || rollCol < 0 || classCol < 0) {
+        if (nameCol < 0 || classCol < 0) {
             return ImportPreviewResult(
                 emptyList(),
-                listOf(ImportRowError(headerIdx + 1, "Required columns missing: Student Name, Father's Name, Roll Number, Class."))
+                listOf(ImportRowError(headerIdx + 1, "Required columns missing: Student Name, Class."))
             )
         }
 
         val valid = mutableListOf<ImportedStudentDraft>()
         val errors = mutableListOf<ImportRowError>()
-        val seenKeys = existingStudents.map { "${it.classId}_${it.sectionId}_${it.sessionId}_${it.rollNumber.lowercase()}" }.toMutableSet()
+        val seenKeys = existingStudents.map { st ->
+            if (st.rollNumber.isNotBlank()) {
+                "${st.classId}_${st.sectionId}_${st.sessionId}_roll_${st.rollNumber.lowercase()}"
+            } else {
+                "${st.classId}_${st.sectionId}_${st.sessionId}_name_${st.name.lowercase()}_${st.fatherName.lowercase()}"
+            }
+        }.toMutableSet()
 
         for (r in (headerIdx + 1) until rawRows.size) {
             val row = rawRows[r]
             if (row.all { it.isBlank() }) continue
             val rowNum = r + 1
             val name = row.getOrNull(nameCol)?.trim().orEmpty()
-            val father = row.getOrNull(fatherCol)?.trim().orEmpty()
-            val roll = row.getOrNull(rollCol)?.trim().orEmpty()
-            val adm = row.getOrNull(admCol)?.trim().orEmpty().ifBlank { "ADM-$roll" }
+            val father = if (fatherCol >= 0) row.getOrNull(fatherCol)?.trim().takeIf { it != "-" }.orEmpty() else ""
+            val roll = if (rollCol >= 0) row.getOrNull(rollCol)?.trim().orEmpty() else ""
+            val adm = if (admCol >= 0) row.getOrNull(admCol)?.trim().orEmpty() else ""
             val classText = row.getOrNull(classCol)?.trim().orEmpty()
-            val sectionText = row.getOrNull(sectionCol)?.trim().orEmpty().ifBlank { "A" }
-            val sessionText = row.getOrNull(sessionCol)?.trim().orEmpty()
+            val sectionText = if (sectionCol >= 0) row.getOrNull(sectionCol)?.trim().orEmpty().ifBlank { "A" } else "A"
+            val sessionText = if (sessionCol >= 0) row.getOrNull(sessionCol)?.trim().orEmpty() else ""
 
             if (name.isBlank()) { errors.add(ImportRowError(rowNum, "Student Name is required.")); continue }
-            if (father.isBlank()) { errors.add(ImportRowError(rowNum, "Father's Name is required for $name.")); continue }
-            if (roll.isBlank()) { errors.add(ImportRowError(rowNum, "Roll Number is required for $name.")); continue }
 
             val matchedClass = classes.firstOrNull { it.name.equals(classText, ignoreCase = true) }
             if (matchedClass == null) {
@@ -414,9 +556,14 @@ object XlsxEngine {
                 continue
             }
 
-            val dedupeKey = "${matchedClass.id}_${matchedSection.id}_${matchedSession.id}_${roll.lowercase()}"
+            val dedupeKey = if (roll.isNotBlank()) {
+                "${matchedClass.id}_${matchedSection.id}_${matchedSession.id}_roll_${roll.lowercase()}"
+            } else {
+                "${matchedClass.id}_${matchedSection.id}_${matchedSession.id}_name_${name.lowercase()}_${father.lowercase()}"
+            }
             if (!seenKeys.add(dedupeKey)) {
-                errors.add(ImportRowError(rowNum, "Duplicate Roll Number '$roll' in ${matchedClass.name}-${matchedSection.name}."))
+                val desc = if (roll.isNotBlank()) "Roll Number '$roll'" else "Student '$name'"
+                errors.add(ImportRowError(rowNum, "Duplicate $desc in ${matchedClass.name}-${matchedSection.name}."))
                 continue
             }
 
@@ -634,15 +781,22 @@ object XlsxEngine {
         val sb = StringBuilder()
         sb.append("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>""")
         sb.append("""<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">""")
+        val totalCols = maxOf(
+            sheet.headers.size,
+            sheet.groupHeaders?.size ?: 0,
+            sheet.rows.maxOfOrNull { it.size } ?: 0
+        ).coerceAtLeast(1)
+
         sb.append("<cols>")
-        sheet.headers.indices.forEach { idx ->
+        (0 until totalCols).forEach { idx ->
             val colNum = idx + 1
-            val width = if (idx <= 3) 20 else 15
+            val width = if (idx == 0) 24 else 14
             sb.append("""<col min="$colNum" max="$colNum" width="$width" customWidth="1"/>""")
         }
         sb.append("</cols>")
         sb.append("<sheetData>")
 
+        val mergeRefs = mutableListOf<String>()
         var rowIndex = 1
         if (!sheet.titleRow.isNullOrBlank()) {
             sb.append("""<row r="$rowIndex"><c r="A$rowIndex" t="inlineStr" s="1"><is><t>${xmlEscape(sheet.titleRow)}</t></is></c></row>""")
@@ -651,6 +805,34 @@ object XlsxEngine {
         if (!sheet.subtitleRow.isNullOrBlank()) {
             sb.append("""<row r="$rowIndex"><c r="A$rowIndex" t="inlineStr" s="2"><is><t>${xmlEscape(sheet.subtitleRow)}</t></is></c></row>""")
             rowIndex++
+        }
+        sheet.extraBannerRows.forEach { banner ->
+            if (banner.isNotBlank()) {
+                sb.append("""<row r="$rowIndex"><c r="A$rowIndex" t="inlineStr" s="2"><is><t>${xmlEscape(banner)}</t></is></c></row>""")
+                rowIndex++
+            }
+        }
+
+        // Optional Top Grouped Header Row (style 3 = blue fill, white bold)
+        val groupHeaders = sheet.groupHeaders
+        if (groupHeaders != null) {
+            val groupRowIdx = rowIndex
+            sb.append("""<row r="$groupRowIdx">""")
+            groupHeaders.forEachIndexed { colIdx, header ->
+                val ref = "${colLetter(colIdx)}$groupRowIdx"
+                sb.append("""<c r="$ref" t="inlineStr" s="3"><is><t>${xmlEscape(header)}</t></is></c>""")
+            }
+            sb.append("</row>")
+            rowIndex++
+
+            sheet.groupMergeSpans.forEach { (startCol, endCol) ->
+                if (endCol > startCol) {
+                    mergeRefs.add("${colLetter(startCol)}$groupRowIdx:${colLetter(endCol)}$groupRowIdx")
+                }
+            }
+            sheet.verticalMergeCols.forEach { col ->
+                mergeRefs.add("${colLetter(col)}$groupRowIdx:${colLetter(col)}${groupRowIdx + 1}")
+            }
         }
 
         // Header row (style 3 = blue fill, white bold)
@@ -662,8 +844,7 @@ object XlsxEngine {
         sb.append("</row>")
         rowIndex++
 
-        // Data rows
-        sheet.rows.forEach { row ->
+        fun appendDataRow(row: List<CellValue>) {
             sb.append("""<row r="$rowIndex">""")
             row.forEachIndexed { colIdx, cell ->
                 val ref = "${colLetter(colIdx)}$rowIndex"
@@ -680,7 +861,18 @@ object XlsxEngine {
             rowIndex++
         }
 
-        sb.append("</sheetData></worksheet>")
+        sheet.rows.forEach { appendDataRow(it) }
+        sheet.footerRows.forEach { appendDataRow(it) }
+
+        sb.append("</sheetData>")
+        if (mergeRefs.isNotEmpty()) {
+            sb.append("""<mergeCells count="${mergeRefs.size}">""")
+            mergeRefs.forEach { ref ->
+                sb.append("""<mergeCell ref="$ref"/>""")
+            }
+            sb.append("</mergeCells>")
+        }
+        sb.append("</worksheet>")
         return sb.toString()
     }
 
@@ -712,7 +904,7 @@ object XlsxEngine {
         }
         return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
   <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
@@ -746,9 +938,12 @@ object XlsxEngine {
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
 </Relationships>"""
 
-    // Style 0: default, 1: Title bold, 2: Subtitle, 3: Header blue fill + white bold, 4: Percentage 0.00%
+    // Style 0: default, 1: Title bold, 2: Subtitle, 3: Header blue fill + white bold, 4: Percentage 0.0%
     private const val STYLES_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <numFmts count="1">
+    <numFmt numFmtId="164" formatCode="0.0%"/>
+  </numFmts>
   <fonts count="3">
     <font><sz val="11"/><name val="Calibri"/></font>
     <font><b/><sz val="13"/><color rgb="FF08408A"/><name val="Calibri"/></font>
@@ -768,7 +963,7 @@ object XlsxEngine {
     <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
     <xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
-    <xf numFmtId="10" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+    <xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
   </cellXfs>
 </styleSheet>"""
 
@@ -882,7 +1077,7 @@ object XlsxEngine {
     }
 
     private fun findHeaderRowIndex(rows: List<List<String>>, keywords: List<String>): Int {
-        for (i in 0 until minOf(rows.size, 6)) {
+        for (i in 0 until minOf(rows.size, 10)) {
             val joined = rows[i].joinToString("|").lowercase()
             if (keywords.any { joined.contains(it) }) return i
         }

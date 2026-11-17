@@ -104,6 +104,7 @@ fun ExcelCenterScreen(
     var pendingImport by remember { mutableStateOf<PendingImportState?>(null) }
     var activeImportKind by remember { mutableStateOf("STUDENTS") }
     var editingExam by remember { mutableStateOf<Examination?>(null) }
+    var showCreateExamDialog by remember { mutableStateOf(false) }
     var showExtractDialog by remember { mutableStateOf(false) }
 
     val saveXlsxLauncher = rememberLauncherForActivityResult(
@@ -193,7 +194,8 @@ fun ExcelCenterScreen(
                 snapshot = snapshot,
                 onSelectSession = { viewModel.selectSession(it) },
                 onSelectExam = { viewModel.selectExam(it) },
-                onEditSelectedExam = { editingExam = it }
+                onEditSelectedExam = { editingExam = it },
+                onCreateExam = { showCreateExamDialog = true }
             )
         }
 
@@ -259,13 +261,23 @@ fun ExcelCenterScreen(
                 enabled = snapshot.visibleStudents.isNotEmpty(),
                 onSave = {
                     val bytes = XlsxEngine.exportCompleteStudentList(
-                        snapshot.visibleStudents, snapshot.classesById, snapshot.sectionsById, snapshot.sessionsById
+                        students = snapshot.visibleStudents,
+                        classesById = snapshot.classesById,
+                        sectionsById = snapshot.sectionsById,
+                        sessionsById = snapshot.sessionsById,
+                        schoolName = snapshot.campus.schoolName,
+                        campusName = snapshot.campus.campusName
                     )
                     exportAndSave("Educators_Students_List.xlsx", bytes)
                 },
                 onShare = {
                     val bytes = XlsxEngine.exportCompleteStudentList(
-                        snapshot.visibleStudents, snapshot.classesById, snapshot.sectionsById, snapshot.sessionsById
+                        students = snapshot.visibleStudents,
+                        classesById = snapshot.classesById,
+                        sectionsById = snapshot.sectionsById,
+                        sessionsById = snapshot.sessionsById,
+                        schoolName = snapshot.campus.schoolName,
+                        campusName = snapshot.campus.campusName
                     )
                     exportAndShare("Educators_Students_List.xlsx", bytes)
                 }
@@ -288,7 +300,9 @@ fun ExcelCenterScreen(
                             examName = snapshot.selectedExam?.name ?: "Exam",
                             sessionName = snapshot.selectedSession?.name ?: "Session",
                             subject = it,
-                            summaries = secSummaries
+                            summaries = secSummaries,
+                            schoolName = snapshot.campus.schoolName,
+                            campusName = snapshot.campus.campusName
                         )
                         exportAndSave("SubjectMarks_${it.name}.xlsx", bytes)
                     }
@@ -301,7 +315,9 @@ fun ExcelCenterScreen(
                             examName = snapshot.selectedExam?.name ?: "Exam",
                             sessionName = snapshot.selectedSession?.name ?: "Session",
                             subject = it,
-                            summaries = secSummaries
+                            summaries = secSummaries,
+                            schoolName = snapshot.campus.schoolName,
+                            campusName = snapshot.campus.campusName
                         )
                         exportAndShare("SubjectMarks_${it.name}.xlsx", bytes)
                     }
@@ -313,28 +329,49 @@ fun ExcelCenterScreen(
         item {
             val stuSum = classSummaries.firstOrNull { it.student.id == selectedStudentId } ?: classSummaries.firstOrNull()
             ExportActionCard(
-                title = "3. Individual Student Result",
-                description = "Detailed subject breakdown & overall result for ${stuSum?.student?.name ?: "selected student"}.",
+                title = "3. Individual Progress Report",
+                description = "Detailed subject breakdown, components, highest in class & grading key for ${stuSum?.student?.name ?: "selected student"}.",
                 enabled = stuSum != null,
                 onSave = {
                     stuSum?.let {
-                        exportAndSave("Result_${it.student.rollNumber}.xlsx", XlsxEngine.exportIndividualStudentResult(it))
+                        val slug = it.student.rollNumber.takeIf { r -> r.isNotBlank() } ?: it.student.name.replace(" ", "_")
+                        exportAndSave(
+                            "ProgressReport_$slug.xlsx",
+                            XlsxEngine.exportIndividualStudentResult(
+                                summary = it,
+                                schoolName = snapshot.campus.schoolName,
+                                campusName = snapshot.campus.campusName,
+                                address = snapshot.campus.address,
+                                contact = snapshot.campus.contact
+                            )
+                        )
                     }
                 },
                 onShare = {
                     stuSum?.let {
-                        exportAndShare("Result_${it.student.rollNumber}.xlsx", XlsxEngine.exportIndividualStudentResult(it))
+                        val slug = it.student.rollNumber.takeIf { r -> r.isNotBlank() } ?: it.student.name.replace(" ", "_")
+                        exportAndShare(
+                            "ProgressReport_$slug.xlsx",
+                            XlsxEngine.exportIndividualStudentResult(
+                                summary = it,
+                                schoolName = snapshot.campus.schoolName,
+                                campusName = snapshot.campus.campusName,
+                                address = snapshot.campus.address,
+                                contact = snapshot.campus.contact
+                            )
+                        )
                     }
                 }
             )
         }
 
-        // 4. Complete Class Result Sheet
+        // 4. Complete Class Consolidated Sheet
         item {
             val className = snapshot.classesById[selectedClassId]?.name ?: "Class"
+            val examComps = snapshot.selectedExam?.components.orEmpty()
             ExportActionCard(
-                title = "4. Complete Class Result Sheet",
-                description = "Full class tabulation with all subject marks, total, percentage, grade & position.",
+                title = "4. Complete Class Consolidated Sheet",
+                description = "Full Consolidated Sheet with grouped subject/component marks, totals, % age & grade.",
                 enabled = classSummaries.isNotEmpty(),
                 onSave = {
                     val bytes = XlsxEngine.exportCompleteClassResultSheet(
@@ -343,9 +380,14 @@ fun ExcelCenterScreen(
                         examName = snapshot.selectedExam?.name ?: "Exam",
                         sessionName = snapshot.selectedSession?.name ?: "Session",
                         subjects = classSubjects,
-                        summaries = classSummaries
+                        summaries = classSummaries,
+                        schoolName = snapshot.campus.schoolName,
+                        campusName = snapshot.campus.campusName,
+                        address = snapshot.campus.address,
+                        contact = snapshot.campus.contact,
+                        examComponents = examComps
                     )
-                    exportAndSave("ClassResult_${className}.xlsx", bytes)
+                    exportAndSave("Consolidated_Sheet_${className}.xlsx", bytes)
                 },
                 onShare = {
                     val bytes = XlsxEngine.exportCompleteClassResultSheet(
@@ -354,9 +396,14 @@ fun ExcelCenterScreen(
                         examName = snapshot.selectedExam?.name ?: "Exam",
                         sessionName = snapshot.selectedSession?.name ?: "Session",
                         subjects = classSubjects,
-                        summaries = classSummaries
+                        summaries = classSummaries,
+                        schoolName = snapshot.campus.schoolName,
+                        campusName = snapshot.campus.campusName,
+                        address = snapshot.campus.address,
+                        contact = snapshot.campus.contact,
+                        examComponents = examComps
                     )
-                    exportAndShare("ClassResult_${className}.xlsx", bytes)
+                    exportAndShare("Consolidated_Sheet_${className}.xlsx", bytes)
                 }
             )
         }
@@ -371,7 +418,9 @@ fun ExcelCenterScreen(
                     val bytes = XlsxEngine.exportClassPerformanceSummary(
                         examName = snapshot.selectedExam?.name ?: "Exam",
                         sessionName = snapshot.selectedSession?.name ?: "Session",
-                        stats = snapshot.classStats
+                        stats = snapshot.classStats,
+                        schoolName = snapshot.campus.schoolName,
+                        campusName = snapshot.campus.campusName
                     )
                     exportAndSave("Class_Performance_Summary.xlsx", bytes)
                 },
@@ -379,7 +428,9 @@ fun ExcelCenterScreen(
                     val bytes = XlsxEngine.exportClassPerformanceSummary(
                         examName = snapshot.selectedExam?.name ?: "Exam",
                         sessionName = snapshot.selectedSession?.name ?: "Session",
-                        stats = snapshot.classStats
+                        stats = snapshot.classStats,
+                        schoolName = snapshot.campus.schoolName,
+                        campusName = snapshot.campus.campusName
                     )
                     exportAndShare("Class_Performance_Summary.xlsx", bytes)
                 }
@@ -422,7 +473,7 @@ fun ExcelCenterScreen(
             item {
                 ImportActionCard(
                     title = "Import Student Records (.xlsx)",
-                    columnsHint = "Columns: Student Name, Father's Name, Roll Number, Admission Number, Class, Section, Academic Session",
+                    columnsHint = "Required: Student Name, Class | Optional: Father's Name, Roll Number, Admission Number, Section, Academic Session",
                     onImport = {
                         activeImportKind = "STUDENTS"
                         openXlsxLauncher.launch(arrayOf("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
@@ -538,7 +589,7 @@ fun ExcelCenterScreen(
             defaultSortOrder = target.sortOrder,
             canDelete = snapshot.examinations.size > 1,
             onDismiss = { editingExam = null },
-            onSave = { name, examType, sessionId, useCustomGrading, sortOrder ->
+            onSave = { name, examType, sessionId, useCustomGrading, sortOrder, components ->
                 viewModel.updateExamination(
                     campusId = snapshot.campus.id,
                     examId = target.id,
@@ -546,13 +597,37 @@ fun ExcelCenterScreen(
                     name = name,
                     examType = examType,
                     useCustomGrading = useCustomGrading,
-                    sortOrder = sortOrder
+                    sortOrder = sortOrder,
+                    components = components
                 )
                 editingExam = null
             },
             onDelete = {
                 viewModel.deleteExamination(snapshot.campus.id, target.id)
                 editingExam = null
+            }
+        )
+    }
+
+    if (showCreateExamDialog) {
+        ExamEditorDialog(
+            existing = null,
+            sessions = snapshot.sessions,
+            defaultSessionId = snapshot.selectedSessionId,
+            defaultSortOrder = (snapshot.examinations.maxOfOrNull { it.sortOrder } ?: 0L) + 1L,
+            canDelete = false,
+            onDismiss = { showCreateExamDialog = false },
+            onSave = { name, examType, sessionId, useCustomGrading, sortOrder, components ->
+                viewModel.addExamination(
+                    campus = snapshot.campus,
+                    sessionId = sessionId,
+                    name = name,
+                    examType = examType,
+                    useCustomGrading = useCustomGrading,
+                    sortOrder = sortOrder,
+                    components = components
+                )
+                showCreateExamDialog = false
             }
         )
     }
@@ -588,6 +663,7 @@ fun PdfCenterScreen(
 
     var pendingPdfFile by remember { mutableStateOf<File?>(null) }
     var editingExam by remember { mutableStateOf<Examination?>(null) }
+    var showCreateExamDialog by remember { mutableStateOf(false) }
     val savePdfLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/pdf")
     ) { uri ->
@@ -626,7 +702,8 @@ fun PdfCenterScreen(
                 snapshot = snapshot,
                 onSelectSession = { viewModel.selectSession(it) },
                 onSelectExam = { viewModel.selectExam(it) },
-                onEditSelectedExam = { editingExam = it }
+                onEditSelectedExam = { editingExam = it },
+                onCreateExam = { showCreateExamDialog = true }
             )
         }
 
@@ -679,18 +756,19 @@ fun PdfCenterScreen(
             }
         }
 
-        // 1. Individual Result Card PDF
+        // 1. Individual Progress Report PDF
         item {
             val stuSum = classSummaries.firstOrNull { it.student.id == selectedStudentId } ?: classSummaries.firstOrNull()
             PdfActionCard(
-                title = "1. Individual Student Result Card (A4)",
-                description = "Official A4 result card with school logo, marks table, positions & signature areas.",
+                title = "1. Individual Progress Report (A4)",
+                description = "Official A4 Progress Report with components, grouped bar chart, grading key & signatures.",
                 enabled = stuSum != null,
                 onSave = {
                     stuSum?.let {
                         triggerSave(
                             PdfReportGenerator.generateResultCardsPdf(
-                                context, listOf(it), snapshot.campus.schoolName, snapshot.campus.campusName, snapshot.campus.logoBase64
+                                context, listOf(it), snapshot.campus.schoolName, snapshot.campus.campusName,
+                                snapshot.campus.logoBase64, snapshot.campus.address, snapshot.campus.contact
                             )
                         )
                     }
@@ -698,63 +776,69 @@ fun PdfCenterScreen(
                 onPrint = {
                     stuSum?.let {
                         val f = PdfReportGenerator.generateResultCardsPdf(
-                            context, listOf(it), snapshot.campus.schoolName, snapshot.campus.campusName, snapshot.campus.logoBase64
+                            context, listOf(it), snapshot.campus.schoolName, snapshot.campus.campusName,
+                            snapshot.campus.logoBase64, snapshot.campus.address, snapshot.campus.contact
                         )
-                        PdfReportGenerator.printPdfFile(context, f, "ResultCard_${it.student.name}")
+                        PdfReportGenerator.printPdfFile(context, f, "ProgressReport_${it.student.name}")
                     }
                 },
                 onShare = {
                     stuSum?.let {
                         val f = PdfReportGenerator.generateResultCardsPdf(
-                            context, listOf(it), snapshot.campus.schoolName, snapshot.campus.campusName, snapshot.campus.logoBase64
+                            context, listOf(it), snapshot.campus.schoolName, snapshot.campus.campusName,
+                            snapshot.campus.logoBase64, snapshot.campus.address, snapshot.campus.contact
                         )
-                        FileExportHelper.shareFile(context, f, "application/pdf", "Share Result Card PDF")
+                        FileExportHelper.shareFile(context, f, "application/pdf", "Share Progress Report PDF")
                     }
                 }
             )
         }
 
-        // 2. Batch All Student Result Cards PDF
+        // 2. Batch All Student Progress Reports PDF
         item {
             PdfActionCard(
-                title = "2. All Student Result Cards (Batch A4 PDF)",
-                description = "Generates all ${classSummaries.size} student result cards in one multi-page A4 document.",
+                title = "2. All Student Progress Reports (Batch A4 PDF)",
+                description = "Generates all ${classSummaries.size} student Progress Reports in one multi-page A4 document.",
                 enabled = classSummaries.isNotEmpty(),
                 onSave = {
                     triggerSave(
                         PdfReportGenerator.generateResultCardsPdf(
-                            context, classSummaries, snapshot.campus.schoolName, snapshot.campus.campusName, snapshot.campus.logoBase64
+                            context, classSummaries, snapshot.campus.schoolName, snapshot.campus.campusName,
+                            snapshot.campus.logoBase64, snapshot.campus.address, snapshot.campus.contact
                         )
                     )
                 },
                 onPrint = {
                     val f = PdfReportGenerator.generateResultCardsPdf(
-                        context, classSummaries, snapshot.campus.schoolName, snapshot.campus.campusName, snapshot.campus.logoBase64
+                        context, classSummaries, snapshot.campus.schoolName, snapshot.campus.campusName,
+                        snapshot.campus.logoBase64, snapshot.campus.address, snapshot.campus.contact
                     )
-                    PdfReportGenerator.printPdfFile(context, f, "All_Result_Cards")
+                    PdfReportGenerator.printPdfFile(context, f, "All_Progress_Reports")
                 },
                 onShare = {
                     val f = PdfReportGenerator.generateResultCardsPdf(
-                        context, classSummaries, snapshot.campus.schoolName, snapshot.campus.campusName, snapshot.campus.logoBase64
+                        context, classSummaries, snapshot.campus.schoolName, snapshot.campus.campusName,
+                        snapshot.campus.logoBase64, snapshot.campus.address, snapshot.campus.contact
                     )
-                    FileExportHelper.shareFile(context, f, "application/pdf", "Share All Result Cards PDF")
+                    FileExportHelper.shareFile(context, f, "application/pdf", "Share All Progress Reports PDF")
                 }
             )
         }
 
-        // 3. Complete Class Result Sheet PDF
+        // 3. Complete Class Consolidated Sheet PDF
         item {
             val className = snapshot.classesById[selectedClassId]?.name ?: "Class"
+            val examComps = snapshot.selectedExam?.components.orEmpty()
             PdfActionCard(
-                title = "3. Complete Class Result Sheet (A4)",
-                description = "Full multi-page class result register with subject marks, totals, percentages & ranks.",
+                title = "3. Complete Class Consolidated Sheet (A4 Landscape)",
+                description = "Official Consolidated Sheet with grouped subject/component marks, totals, % age & grade.",
                 enabled = classSummaries.isNotEmpty(),
                 onSave = {
                     triggerSave(
                         PdfReportGenerator.generateClassResultSheetPdf(
                             context, snapshot.campus.schoolName, snapshot.campus.campusName, snapshot.campus.logoBase64,
                             className, "All Sections", snapshot.selectedExam?.name ?: "Exam", snapshot.selectedSession?.name ?: "Session",
-                            classSubjects, classSummaries
+                            classSubjects, classSummaries, snapshot.campus.address, snapshot.campus.contact, examComps
                         )
                     )
                 },
@@ -762,17 +846,17 @@ fun PdfCenterScreen(
                     val f = PdfReportGenerator.generateClassResultSheetPdf(
                         context, snapshot.campus.schoolName, snapshot.campus.campusName, snapshot.campus.logoBase64,
                         className, "All Sections", snapshot.selectedExam?.name ?: "Exam", snapshot.selectedSession?.name ?: "Session",
-                        classSubjects, classSummaries
+                        classSubjects, classSummaries, snapshot.campus.address, snapshot.campus.contact, examComps
                     )
-                    PdfReportGenerator.printPdfFile(context, f, "ClassResult_$className")
+                    PdfReportGenerator.printPdfFile(context, f, "ConsolidatedSheet_$className")
                 },
                 onShare = {
                     val f = PdfReportGenerator.generateClassResultSheetPdf(
                         context, snapshot.campus.schoolName, snapshot.campus.campusName, snapshot.campus.logoBase64,
                         className, "All Sections", snapshot.selectedExam?.name ?: "Exam", snapshot.selectedSession?.name ?: "Session",
-                        classSubjects, classSummaries
+                        classSubjects, classSummaries, snapshot.campus.address, snapshot.campus.contact, examComps
                     )
-                    FileExportHelper.shareFile(context, f, "application/pdf", "Share Class Result PDF")
+                    FileExportHelper.shareFile(context, f, "application/pdf", "Share Consolidated Sheet PDF")
                 }
             )
         }
@@ -901,7 +985,7 @@ fun PdfCenterScreen(
             defaultSortOrder = target.sortOrder,
             canDelete = snapshot.examinations.size > 1,
             onDismiss = { editingExam = null },
-            onSave = { name, examType, sessionId, useCustomGrading, sortOrder ->
+            onSave = { name, examType, sessionId, useCustomGrading, sortOrder, components ->
                 viewModel.updateExamination(
                     campusId = snapshot.campus.id,
                     examId = target.id,
@@ -909,13 +993,37 @@ fun PdfCenterScreen(
                     name = name,
                     examType = examType,
                     useCustomGrading = useCustomGrading,
-                    sortOrder = sortOrder
+                    sortOrder = sortOrder,
+                    components = components
                 )
                 editingExam = null
             },
             onDelete = {
                 viewModel.deleteExamination(snapshot.campus.id, target.id)
                 editingExam = null
+            }
+        )
+    }
+
+    if (showCreateExamDialog) {
+        ExamEditorDialog(
+            existing = null,
+            sessions = snapshot.sessions,
+            defaultSessionId = snapshot.selectedSessionId,
+            defaultSortOrder = (snapshot.examinations.maxOfOrNull { it.sortOrder } ?: 0L) + 1L,
+            canDelete = false,
+            onDismiss = { showCreateExamDialog = false },
+            onSave = { name, examType, sessionId, useCustomGrading, sortOrder, components ->
+                viewModel.addExamination(
+                    campus = snapshot.campus,
+                    sessionId = sessionId,
+                    name = name,
+                    examType = examType,
+                    useCustomGrading = useCustomGrading,
+                    sortOrder = sortOrder,
+                    components = components
+                )
+                showCreateExamDialog = false
             }
         )
     }

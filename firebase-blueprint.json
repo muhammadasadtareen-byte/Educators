@@ -23,6 +23,9 @@
         "memberUids": { "type": "array", "description": "Authorized staff UIDs" },
         "schoolName": { "type": "string", "description": "School display name" },
         "campusName": { "type": "string", "description": "Campus subtitle" },
+        "address": { "type": "string", "description": "Optional campus street address" },
+        "contact": { "type": "string", "description": "Optional campus phone/contact" },
+        "studentEntryFields": { "type": "array", "description": "Enabled optional student entry fields" },
         "logoBase64": { "type": "string", "description": "Optional compressed school logo base64" },
         "activeSessionId": { "type": "string", "description": "Active academic session ID" },
         "activeExamId": { "type": "string", "description": "Active examination ID" },
@@ -76,6 +79,7 @@
         "examType": { "type": "string", "enum": ["MONTHLY_TEST", "MIDTERM", "FINAL_TERM", "ANNUAL", "CUSTOM"] },
         "useCustomGrading": { "type": "boolean" },
         "sortOrder": { "type": "integer" },
+        "components": { "type": "array", "description": "Optional exam assessment components with maxMarks" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
@@ -161,6 +165,7 @@
         "studentId": { "type": "string" },
         "subjectId": { "type": "string" },
         "obtainedMarks": { "type": "number" },
+        "componentMarks": { "type": "object", "description": "Optional per-component marks keyed by component id" },
         "enteredByUid": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }

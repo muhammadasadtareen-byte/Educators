@@ -207,12 +207,86 @@ test("Teacher can enter marks for assigned class but cannot modify unassigned cl
   );
 });
 
+const assert = require("node:assert");
+
 test("Outsider cannot read or write any campus data", async () => {
   await seedCampusAndStaff();
   const outsiderDb = testEnv.authenticatedContext(OUTSIDER_UID).firestore();
   await assertFails(outsiderDb.collection("campuses").doc(CAMPUS_ID).get());
-  await assertFails(outsiderDb.collection("campuses").where("memberUids", "array-contains", OUTSIDER_UID).get());
+  await assertFails(outsiderDb.collection("campuses").get());
   await assertFails(
-    outsiderDb.collection("campuses").doc(CAMPUS_ID).collection("marks").where("memberUids", "array-contains", OUTSIDER_UID).get()
+    outsiderDb.collection("campuses").doc(CAMPUS_ID).collection("marks").get()
+  );
+  const ownScoped = await assertSucceeds(
+    outsiderDb.collection("campuses").where("memberUids", "array-contains", OUTSIDER_UID).get()
+  );
+  assert.strictEqual(ownScoped.size, 0);
+});
+
+test("Non-mandatory student fields, examination components, componentMarks, and campus metadata succeed under rules", async () => {
+  await seedCampusAndStaff();
+  const adminDb = testEnv.authenticatedContext(ADMIN_UID).firestore();
+  const now = new Date(Date.now() - 1000);
+
+  await assertSucceeds(
+    adminDb.collection("campuses").doc(CAMPUS_ID).update({
+      address: "Kala Pul, Near Gelani Mart, Mansehra Road, Abbottabad",
+      contact: "0992-406672",
+      studentEntryFields: ["FATHER_NAME"],
+      updatedAt: new Date(Date.now() - 200),
+    })
+  );
+
+  await assertSucceeds(
+    adminDb.collection("campuses").doc(CAMPUS_ID).collection("students").doc("stu_min").set({
+      ownerId: ADMIN_UID,
+      memberUids: [ADMIN_UID, TEACHER_UID],
+      name: "Abiha Fatima",
+      fatherName: "",
+      rollNumber: "",
+      admissionNumber: "",
+      classId: "cls_5",
+      sectionId: "sec_a",
+      sessionId: "sess_2026",
+      createdAt: now,
+      updatedAt: now,
+    })
+  );
+
+  await assertSucceeds(
+    adminDb.collection("campuses").doc(CAMPUS_ID).collection("examinations").doc("exam_task").set({
+      ownerId: ADMIN_UID,
+      memberUids: [ADMIN_UID, TEACHER_UID],
+      sessionId: "sess_2026",
+      name: "ASSESSMENT TASK-I (TERM II)",
+      examType: "CUSTOM",
+      useCustomGrading: false,
+      sortOrder: 5,
+      components: [
+        { id: "task_01", name: "Assessment Task 01", maxMarks: 30 },
+        { id: "quiz", name: "Quiz", maxMarks: 20 }
+      ],
+      createdAt: now,
+      updatedAt: now,
+    })
+  );
+
+  await assertSucceeds(
+    adminDb.collection("campuses").doc(CAMPUS_ID).collection("marks").doc("m_comp").set({
+      ownerId: ADMIN_UID,
+      memberUids: [ADMIN_UID, TEACHER_UID],
+      sessionId: "sess_2026",
+      examId: "exam_task",
+      classId: "cls_5",
+      sectionId: "sec_a",
+      studentId: "stu_min",
+      subjectId: "sub_eng",
+      obtainedMarks: 34,
+      componentMarks: { task_01: 20, quiz: 14 },
+      enteredByUid: ADMIN_UID,
+      createdAt: now,
+      updatedAt: now,
+    })
   );
 });
+

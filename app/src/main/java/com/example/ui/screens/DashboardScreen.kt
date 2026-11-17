@@ -61,6 +61,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.AppRoute
 import com.example.R
+import com.example.data.model.ExamComponent
 import com.example.data.model.ExamType
 import com.example.data.model.Examination
 import com.example.data.model.StaffRole
@@ -80,10 +81,12 @@ fun DashboardScreen(
     onSelectSession: (String) -> Unit,
     onSelectExam: (String) -> Unit,
     onNavigate: (String) -> Unit,
-    onUpdateExam: (examId: String, sessionId: String, name: String, examType: ExamType, useCustomGrading: Boolean, sortOrder: Long) -> Unit = { _, _, _, _, _, _ -> },
+    onUpdateExam: (examId: String, sessionId: String, name: String, examType: ExamType, useCustomGrading: Boolean, sortOrder: Long, components: List<ExamComponent>) -> Unit = { _, _, _, _, _, _, _ -> },
+    onCreateExam: (sessionId: String, name: String, examType: ExamType, useCustomGrading: Boolean, sortOrder: Long, components: List<ExamComponent>) -> Unit = { _, _, _, _, _, _ -> },
     onDeleteExam: (examId: String) -> Unit = {}
 ) {
     var editingExam by remember { mutableStateOf<Examination?>(null) }
+    var showCreateExamDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -219,7 +222,8 @@ fun DashboardScreen(
                 snapshot = snapshot,
                 onSelectSession = onSelectSession,
                 onSelectExam = onSelectExam,
-                onEditSelectedExam = { editingExam = it }
+                onEditSelectedExam = { editingExam = it },
+                onCreateExam = { showCreateExamDialog = true }
             )
         }
 
@@ -430,13 +434,28 @@ fun DashboardScreen(
             defaultSortOrder = target.sortOrder,
             canDelete = snapshot.examinations.size > 1,
             onDismiss = { editingExam = null },
-            onSave = { name, examType, sessionId, useCustomGrading, sortOrder ->
-                onUpdateExam(target.id, sessionId, name, examType, useCustomGrading, sortOrder)
+            onSave = { name, examType, sessionId, useCustomGrading, sortOrder, components ->
+                onUpdateExam(target.id, sessionId, name, examType, useCustomGrading, sortOrder, components)
                 editingExam = null
             },
             onDelete = {
                 onDeleteExam(target.id)
                 editingExam = null
+            }
+        )
+    }
+
+    if (showCreateExamDialog) {
+        ExamEditorDialog(
+            existing = null,
+            sessions = snapshot.sessions,
+            defaultSessionId = snapshot.selectedSessionId,
+            defaultSortOrder = (snapshot.examinations.size + 1).toLong(),
+            canDelete = false,
+            onDismiss = { showCreateExamDialog = false },
+            onSave = { name, examType, sessionId, useCustomGrading, sortOrder, components ->
+                onCreateExam(sessionId, name, examType, useCustomGrading, sortOrder, components)
+                showCreateExamDialog = false
             }
         )
     }

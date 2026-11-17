@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -42,6 +43,8 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -53,6 +56,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -70,9 +74,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.example.data.model.AcademicSession
+import com.example.data.model.ExamComponent
+import com.example.data.model.ExamComponentPresets
 import com.example.data.model.ExamType
 import com.example.data.model.Examination
 import com.example.data.model.StaffRole
+import com.example.domain.ResultCalculator
 import com.example.ui.SchoolSnapshot
 import com.example.ui.theme.AmberPending
 import com.example.ui.theme.AmberPendingContainer
@@ -95,13 +102,15 @@ fun <T> SelectorDropdown(
     itemLabel: (T) -> String,
     onSelect: (T) -> Unit,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    footerActions: List<Pair<String, () -> Unit>> = emptyList()
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val hasMenuEntries = items.isNotEmpty() || footerActions.isNotEmpty()
     Box(modifier = modifier) {
         OutlinedButton(
-            onClick = { if (enabled && items.isNotEmpty()) expanded = true },
-            enabled = enabled && items.isNotEmpty(),
+            onClick = { if (enabled && hasMenuEntries) expanded = true },
+            enabled = enabled && hasMenuEntries,
             shape = RoundedCornerShape(12.dp),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
             modifier = Modifier
@@ -145,6 +154,26 @@ fun <T> SelectorDropdown(
                         onSelect(item)
                     }
                 )
+            }
+            if (footerActions.isNotEmpty()) {
+                if (items.isNotEmpty()) {
+                    HorizontalDivider()
+                }
+                footerActions.forEach { (actionLabel, action) ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = actionLabel,
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                color = EducatorsBlue
+                            )
+                        },
+                        onClick = {
+                            expanded = false
+                            action()
+                        }
+                    )
+                }
             }
         }
     }
@@ -291,7 +320,7 @@ fun EmptyStateCard(
             )
             if (actionLabel != null && onAction != null) {
                 Spacer(Modifier.height(14.dp))
-                androidx.compose.material3.Button(
+                Button(
                     onClick = onAction,
                     modifier = Modifier.heightIn(min = 48.dp)
                 ) {
@@ -410,8 +439,24 @@ fun CampusContextBar(
     snapshot: SchoolSnapshot,
     onSelectSession: (String) -> Unit,
     onSelectExam: (String) -> Unit,
-    onEditSelectedExam: ((Examination) -> Unit)? = null
+    onEditSelectedExam: ((Examination) -> Unit)? = null,
+    onCreateExam: (() -> Unit)? = null
 ) {
+    val selectedExam = snapshot.selectedExam
+    val isAdmin = snapshot.effectiveRole == StaffRole.ADMIN
+    val examFooterActions = remember(selectedExam, isAdmin, onEditSelectedExam, onCreateExam) {
+        buildList {
+            if (isAdmin) {
+                if (selectedExam != null && onEditSelectedExam != null) {
+                    add("✎ Edit '${selectedExam.name}'" to { onEditSelectedExam(selectedExam) })
+                }
+                if (onCreateExam != null) {
+                    add("+ Create New Examination" to onCreateExam)
+                }
+            }
+        }
+    }
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -427,14 +472,17 @@ fun CampusContextBar(
         )
         SelectorDropdown(
             label = "Examination",
-            selectedText = snapshot.selectedExam?.name ?: "Select Exam",
+            selectedText = selectedExam?.name ?: "Select Exam",
             items = snapshot.examinations,
-            itemLabel = { it.name },
+            itemLabel = { exam ->
+                if (exam.components.isEmpty()) exam.name
+                else "${exam.name} (${exam.components.size} parts)"
+            },
             onSelect = { onSelectExam(it.id) },
+            footerActions = examFooterActions,
             modifier = Modifier.weight(1.1f)
         )
-        val selectedExam = snapshot.selectedExam
-        if (onEditSelectedExam != null && snapshot.effectiveRole == StaffRole.ADMIN && selectedExam != null) {
+        if (onEditSelectedExam != null && isAdmin && selectedExam != null) {
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surface,
@@ -458,6 +506,7 @@ fun CampusContextBar(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ExamEditorDialog(
     existing: Examination?,
@@ -466,7 +515,14 @@ fun ExamEditorDialog(
     defaultSortOrder: Long,
     canDelete: Boolean,
     onDismiss: () -> Unit,
-    onSave: (name: String, examType: ExamType, sessionId: String, useCustomGrading: Boolean, sortOrder: Long) -> Unit,
+    onSave: (
+        name: String,
+        examType: ExamType,
+        sessionId: String,
+        useCustomGrading: Boolean,
+        sortOrder: Long,
+        components: List<ExamComponent>
+    ) -> Unit,
     onDelete: (() -> Unit)? = null
 ) {
     var name by remember(existing) { mutableStateOf(existing?.name ?: "") }
@@ -478,6 +534,11 @@ fun ExamEditorDialog(
     var sortOrderText by remember(existing, defaultSortOrder) {
         mutableStateOf((existing?.sortOrder ?: defaultSortOrder).toString())
     }
+    val components = remember(existing) {
+        mutableStateListOf<ExamComponent>().apply {
+            existing?.components?.let { addAll(it) }
+        }
+    }
     var confirmDelete by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
@@ -488,6 +549,7 @@ fun ExamEditorDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(max = 520.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
@@ -498,14 +560,14 @@ fun ExamEditorDialog(
                         errorMsg = null
                     },
                     label = { Text("Exam Name *") },
-                    placeholder = { Text("e.g. Midterm, 1st Term, Unit Test") },
+                    placeholder = { Text("e.g. ASSESSMENT TASK-I (TERM II), Mid Year Examination") },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("exam_name_input")
                 )
                 SelectorDropdown(
-                    label = "Exam Type",
+                    label = "Exam Category",
                     selectedText = examType.label,
                     items = ExamType.entries,
                     itemLabel = { it.label },
@@ -546,6 +608,121 @@ fun ExamEditorDialog(
                     }
                     Switch(checked = customGrading, onCheckedChange = { customGrading = it })
                 }
+
+                HorizontalDivider()
+
+                // Assessment Components Section
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "Assessment Components (Optional Breakdown)",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = EducatorsNavy
+                    )
+                    Text(
+                        text = "Define sub-columns per subject (e.g. Assessment Task 01 + Quiz, or Classwork + Quiz + Assessment-I + Assessment-II). Leave empty for single total marks.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        FilterChip(
+                            selected = components.isEmpty(),
+                            onClick = { components.clear() },
+                            label = { Text("Single Total") }
+                        )
+                        FilterChip(
+                            selected = components.size == 2 && components.firstOrNull()?.id == "task_01",
+                            onClick = {
+                                components.clear()
+                                components.addAll(ExamComponentPresets.consolidatedTaskPreset())
+                            },
+                            label = { Text("Task 01 (30) + Quiz (20)") }
+                        )
+                        FilterChip(
+                            selected = components.size == 4 && components.firstOrNull()?.id == "classwork",
+                            onClick = {
+                                components.clear()
+                                components.addAll(ExamComponentPresets.midYearTermPreset())
+                            },
+                            label = { Text("Mid Year (10+10+15+25)") }
+                        )
+                    }
+
+                    components.forEachIndexed { idx, comp ->
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = EducatorsBlueSurface.copy(alpha = 0.45f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = comp.name,
+                                    onValueChange = { newName ->
+                                        components[idx] = comp.copy(name = newName)
+                                        errorMsg = null
+                                    },
+                                    label = { Text("Component Name") },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1.5f)
+                                )
+                                OutlinedTextField(
+                                    value = if (comp.maxMarks == 0.0) "" else ResultCalculator.formatMarks(comp.maxMarks),
+                                    onValueChange = { rawMax ->
+                                        val parsed = rawMax.trim().toDoubleOrNull() ?: 0.0
+                                        components[idx] = comp.copy(maxMarks = parsed)
+                                        errorMsg = null
+                                    },
+                                    label = { Text("Max") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(0.75f)
+                                )
+                                IconButton(onClick = { components.removeAt(idx) }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Remove component", tint = CrimsonFail)
+                                }
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                components.add(
+                                    ExamComponent(
+                                        id = "comp_${System.nanoTime()}",
+                                        name = "Component ${components.size + 1}",
+                                        maxMarks = 10.0
+                                    )
+                                )
+                            },
+                            modifier = Modifier.heightIn(min = 42.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Add Component")
+                        }
+                        if (components.isNotEmpty()) {
+                            Text(
+                                text = "Sum: ${ResultCalculator.formatMarks(components.sumOf { it.maxMarks })}",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = EducatorsNavy
+                            )
+                        }
+                    }
+                }
+
                 if (existing != null && canDelete && onDelete != null) {
                     if (!confirmDelete) {
                         OutlinedButton(
@@ -595,10 +772,28 @@ fun ExamEditorDialog(
                 onClick = {
                     val trimmedName = name.trim()
                     val parsedOrder = sortOrderText.trim().toLongOrNull() ?: defaultSortOrder
+                    val invalidComponent = components.any { it.name.trim().isBlank() || it.maxMarks <= 0.0 }
                     when {
                         trimmedName.isBlank() -> errorMsg = "Exam Name is required."
                         sessionId.isBlank() -> errorMsg = "Please select an Academic Session."
-                        else -> onSave(trimmedName, examType, sessionId, customGrading, parsedOrder.coerceIn(0L, 1000L))
+                        invalidComponent -> errorMsg = "Every assessment component needs a name and Max Marks > 0."
+                        else -> {
+                            val cleanedComponents = components.mapIndexed { idx, c ->
+                                ExamComponent(
+                                    id = c.id.ifBlank { "comp_${idx + 1}" },
+                                    name = c.name.trim(),
+                                    maxMarks = c.maxMarks
+                                )
+                            }
+                            onSave(
+                                trimmedName,
+                                examType,
+                                sessionId,
+                                customGrading,
+                                parsedOrder.coerceIn(0L, 1000L),
+                                cleanedComponents
+                            )
+                        }
                     }
                 },
                 modifier = Modifier.testTag("save_exam_btn")

@@ -444,7 +444,7 @@ private fun AppNavHost(
                 onSelectSession = { viewModel.selectSession(it) },
                 onSelectExam = { viewModel.selectExam(it) },
                 onNavigate = onNavigate,
-                onUpdateExam = { examId, sessionId, name, examType, useCustomGrading, sortOrder ->
+                onUpdateExam = { examId, sessionId, name, examType, useCustomGrading, sortOrder, components ->
                     viewModel.updateExamination(
                         campusId = snapshot.campus.id,
                         examId = examId,
@@ -452,7 +452,19 @@ private fun AppNavHost(
                         name = name,
                         examType = examType,
                         useCustomGrading = useCustomGrading,
-                        sortOrder = sortOrder
+                        sortOrder = sortOrder,
+                        components = components
+                    )
+                },
+                onCreateExam = { sessionId, name, examType, useCustomGrading, sortOrder, components ->
+                    viewModel.addExamination(
+                        campus = snapshot.campus,
+                        sessionId = sessionId,
+                        name = name,
+                        examType = examType,
+                        useCustomGrading = useCustomGrading,
+                        sortOrder = sortOrder,
+                        components = components
                     )
                 },
                 onDeleteExam = { examId ->

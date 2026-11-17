@@ -55,9 +55,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material3.FilterChip
 import com.example.AppRoute
 import com.example.data.model.StaffRole
 import com.example.data.model.Student
+import com.example.data.model.StudentEntryField
 import com.example.ui.MainViewModel
 import com.example.ui.SchoolSnapshot
 import com.example.ui.theme.CrimsonFail
@@ -257,14 +261,22 @@ fun StudentsScreen(
                                         style = MaterialTheme.typography.titleMedium,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
-                                    Text(
-                                        text = "S/O ${st.fatherName}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    val cleanFather = st.fatherName.trim().takeIf { it.isNotBlank() && it != "-" }
+                                    if (cleanFather != null) {
+                                        Text(
+                                            text = "S/O $cleanFather",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                     Spacer(Modifier.height(4.dp))
+                                    val metaParts = buildList {
+                                        st.rollNumber.trim().takeIf { it.isNotBlank() }?.let { add("Roll: $it") }
+                                        st.admissionNumber.trim().takeIf { it.isNotBlank() }?.let { add("Adm: $it") }
+                                        add("$clsName-$secName ($sesName)")
+                                    }
                                     Text(
-                                        text = "Roll: ${st.rollNumber}  •  Adm: ${st.admissionNumber}  •  $clsName-$secName ($sesName)",
+                                        text = metaParts.joinToString("  •  "),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = EducatorsBlue
                                     )
@@ -275,13 +287,13 @@ fun StudentsScreen(
                                             editingStudent = st
                                             showAddEditDialog = true
                                         },
-                                        modifier = Modifier.testTag("edit_student_${st.rollNumber}")
+                                        modifier = Modifier.testTag("edit_student_${st.rollNumber.ifBlank { st.id }}")
                                     ) {
                                         Icon(Icons.Default.Edit, contentDescription = "Edit ${st.name}", tint = EducatorsBlue)
                                     }
                                     IconButton(
                                         onClick = { deleteCandidate = st },
-                                        modifier = Modifier.testTag("delete_student_${st.rollNumber}")
+                                        modifier = Modifier.testTag("delete_student_${st.rollNumber.ifBlank { st.id }}")
                                     ) {
                                         Icon(Icons.Default.Delete, contentDescription = "Delete ${st.name}", tint = CrimsonFail)
                                     }
@@ -326,10 +338,11 @@ fun StudentsScreen(
     }
 
     deleteCandidate?.let { stu ->
+        val rollSuffix = stu.rollNumber.takeIf { it.isNotBlank() }?.let { " (Roll $it)" } ?: ""
         AlertDialog(
             onDismissRequest = { deleteCandidate = null },
             title = { Text("Delete Student") },
-            text = { Text("Remove ${stu.name} (Roll ${stu.rollNumber}) from the campus directory?") },
+            text = { Text("Remove ${stu.name}$rollSuffix from the campus directory?") },
             confirmButton = {
                 Button(
                     onClick = {
@@ -346,6 +359,7 @@ fun StudentsScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StudentFormDialog(
     snapshot: SchoolSnapshot,
@@ -355,7 +369,7 @@ private fun StudentFormDialog(
 ) {
     val context = LocalContext.current
     var name by remember { mutableStateOf(existing?.name ?: "") }
-    var fatherName by remember { mutableStateOf(existing?.fatherName ?: "") }
+    var fatherName by remember { mutableStateOf(existing?.fatherName?.takeIf { it != "-" } ?: "") }
     var rollNumber by remember { mutableStateOf(existing?.rollNumber ?: "") }
     var admissionNumber by remember { mutableStateOf(existing?.admissionNumber ?: "") }
     var selectedClassId by remember {
@@ -374,6 +388,17 @@ private fun StudentFormDialog(
         mutableStateOf(existing?.sessionId ?: snapshot.selectedSessionId)
     }
     var photoBase64 by remember { mutableStateOf(existing?.photoBase64) }
+
+    var enabledFields by remember(existing, snapshot.campus.studentEntryFields) {
+        val base = snapshot.campus.studentEntryFields.toMutableSet()
+        if (existing != null) {
+            if (existing.fatherName.isNotBlank() && existing.fatherName != "-") base.add(StudentEntryField.FATHER_NAME)
+            if (existing.rollNumber.isNotBlank()) base.add(StudentEntryField.ROLL_NUMBER)
+            if (existing.admissionNumber.isNotBlank()) base.add(StudentEntryField.ADMISSION_NUMBER)
+            if (!existing.photoBase64.isNullOrBlank()) base.add(StudentEntryField.PHOTO)
+        }
+        mutableStateOf(base.toSet())
+    }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -391,57 +416,104 @@ private fun StudentFormDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(max = 520.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                Text(
+                    text = "Which entries do you want to add?",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = EducatorsNavy
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    StudentAvatar(photoBase64 = photoBase64, name = name.ifBlank { "S" }, sizeDp = 56)
-                    OutlinedButton(
-                        onClick = {
-                            photoPickerLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                            )
-                        },
-                        modifier = Modifier.heightIn(min = 48.dp)
+                    FilterChip(
+                        selected = true,
+                        onClick = {},
+                        label = { Text("Name (Required)") }
+                    )
+                    listOf(
+                        StudentEntryField.FATHER_NAME to "Father's Name",
+                        StudentEntryField.ROLL_NUMBER to "Roll No",
+                        StudentEntryField.ADMISSION_NUMBER to "Admission No",
+                        StudentEntryField.PHOTO to "Photo"
+                    ).forEach { (key, label) ->
+                        val active = enabledFields.contains(key)
+                        FilterChip(
+                            selected = active,
+                            onClick = {
+                                enabledFields = if (active) enabledFields - key else enabledFields + key
+                            },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+
+                if (enabledFields.contains(StudentEntryField.PHOTO)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (photoBase64 == null) "Select Photo (Optional)" else "Change Photo")
+                        StudentAvatar(photoBase64 = photoBase64, name = name.ifBlank { "S" }, sizeDp = 56)
+                        OutlinedButton(
+                            onClick = {
+                                photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            modifier = Modifier.heightIn(min = 48.dp)
+                        ) {
+                            Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (photoBase64 == null) "Select Photo (Optional)" else "Change Photo")
+                        }
                     }
                 }
 
                 OutlinedTextField(
                     value = name,
-                    onValueChange = { name = it },
+                    onValueChange = {
+                        name = it
+                        errorMsg = null
+                    },
                     label = { Text("Student Name *") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("student_name_input")
                 )
-                OutlinedTextField(
-                    value = fatherName,
-                    onValueChange = { fatherName = it },
-                    label = { Text("Father's Name *") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().testTag("student_father_input")
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (enabledFields.contains(StudentEntryField.FATHER_NAME)) {
                     OutlinedTextField(
-                        value = rollNumber,
-                        onValueChange = { rollNumber = it },
-                        label = { Text("Roll No *") },
+                        value = fatherName,
+                        onValueChange = { fatherName = it },
+                        label = { Text("Father's Name (Optional)") },
                         singleLine = true,
-                        modifier = Modifier.weight(1f).testTag("student_roll_input")
+                        modifier = Modifier.fillMaxWidth().testTag("student_father_input")
                     )
-                    OutlinedTextField(
-                        value = admissionNumber,
-                        onValueChange = { admissionNumber = it },
-                        label = { Text("Admission No *") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f).testTag("student_adm_input")
-                    )
+                }
+                val showRoll = enabledFields.contains(StudentEntryField.ROLL_NUMBER)
+                val showAdm = enabledFields.contains(StudentEntryField.ADMISSION_NUMBER)
+                if (showRoll || showAdm) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (showRoll) {
+                            OutlinedTextField(
+                                value = rollNumber,
+                                onValueChange = { rollNumber = it },
+                                label = { Text("Roll No (Optional)") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f).testTag("student_roll_input")
+                            )
+                        }
+                        if (showAdm) {
+                            OutlinedTextField(
+                                value = admissionNumber,
+                                onValueChange = { admissionNumber = it },
+                                label = { Text("Admission No (Optional)") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f).testTag("student_adm_input")
+                            )
+                        }
+                    }
                 }
 
                 SelectorDropdown(
@@ -482,15 +554,18 @@ private fun StudentFormDialog(
                 onClick = {
                     when {
                         name.isBlank() -> errorMsg = "Student Name is required."
-                        fatherName.isBlank() -> errorMsg = "Father's Name is required."
-                        rollNumber.isBlank() -> errorMsg = "Roll Number is required."
-                        admissionNumber.isBlank() -> errorMsg = "Admission Number is required."
                         selectedClassId.isBlank() -> errorMsg = "Please select a Class."
                         selectedSectionId.isBlank() -> errorMsg = "Please add a Section to this class first."
                         selectedSessionId.isBlank() -> errorMsg = "Please select an Academic Session."
                         else -> onSave(
-                            name, fatherName, rollNumber, admissionNumber,
-                            selectedClassId, selectedSectionId, selectedSessionId, photoBase64
+                            name.trim(),
+                            if (enabledFields.contains(StudentEntryField.FATHER_NAME)) fatherName.trim() else "",
+                            if (enabledFields.contains(StudentEntryField.ROLL_NUMBER)) rollNumber.trim() else "",
+                            if (enabledFields.contains(StudentEntryField.ADMISSION_NUMBER)) admissionNumber.trim() else "",
+                            selectedClassId,
+                            selectedSectionId,
+                            selectedSessionId,
+                            if (enabledFields.contains(StudentEntryField.PHOTO)) photoBase64 else null
                         )
                     }
                 },

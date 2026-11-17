@@ -20,10 +20,10 @@ object ResultCalculator {
     fun defaultGradingTemplates(): List<GradingRule> = listOf(
         GradingRule(examId = "DEFAULT", minPercentage = 90.0, maxPercentage = 100.0, grade = "A+", remarks = "Outstanding", passing = true, sortOrder = 1),
         GradingRule(examId = "DEFAULT", minPercentage = 80.0, maxPercentage = 89.99, grade = "A", remarks = "Excellent", passing = true, sortOrder = 2),
-        GradingRule(examId = "DEFAULT", minPercentage = 70.0, maxPercentage = 79.99, grade = "B", remarks = "Very Good", passing = true, sortOrder = 3),
-        GradingRule(examId = "DEFAULT", minPercentage = 60.0, maxPercentage = 69.99, grade = "C", remarks = "Good", passing = true, sortOrder = 4),
-        GradingRule(examId = "DEFAULT", minPercentage = 50.0, maxPercentage = 59.99, grade = "D", remarks = "Satisfactory", passing = true, sortOrder = 5),
-        GradingRule(examId = "DEFAULT", minPercentage = 40.0, maxPercentage = 49.99, grade = "E", remarks = "Pass", passing = true, sortOrder = 6),
+        GradingRule(examId = "DEFAULT", minPercentage = 70.0, maxPercentage = 79.99, grade = "B+", remarks = "Very Good", passing = true, sortOrder = 3),
+        GradingRule(examId = "DEFAULT", minPercentage = 60.0, maxPercentage = 69.99, grade = "B", remarks = "Good", passing = true, sortOrder = 4),
+        GradingRule(examId = "DEFAULT", minPercentage = 50.0, maxPercentage = 59.99, grade = "C", remarks = "Satisfactory", passing = true, sortOrder = 5),
+        GradingRule(examId = "DEFAULT", minPercentage = 40.0, maxPercentage = 49.99, grade = "D", remarks = "Pass", passing = true, sortOrder = 6),
         GradingRule(examId = "DEFAULT", minPercentage = 0.0, maxPercentage = 39.99, grade = "F", remarks = "Fail", passing = false, sortOrder = 7)
     )
 
@@ -79,13 +79,15 @@ object ResultCalculator {
     fun calculateSubjectResult(
         subject: Subject,
         markEntry: MarkEntry?,
-        gradingRules: List<GradingRule>
+        gradingRules: List<GradingRule>,
+        highestMarksInClass: Double? = null
     ): SubjectResult {
         if (markEntry == null) {
             return SubjectResult(
                 subject = subject,
                 markEntry = null,
                 obtainedMarks = null,
+                highestMarksInClass = highestMarksInClass,
                 percentage = null,
                 grade = "-",
                 remarks = "Pending",
@@ -105,6 +107,7 @@ object ResultCalculator {
             subject = subject,
             markEntry = markEntry,
             obtainedMarks = obtained,
+            highestMarksInClass = highestMarksInClass ?: obtained,
             percentage = pct,
             grade = effectiveGrade,
             remarks = effectiveRemarks,
@@ -130,12 +133,27 @@ object ResultCalculator {
         val sortedSubjects = subjects.sortedWith(compareBy<Subject> { it.sortOrder }.thenBy { it.name })
         val marksByStudentAndSubject = marks.associateBy { "${it.studentId}_${it.subjectId}" }
         val recordsByStudentId = resultRecords.associateBy { it.studentId }
+        val subjectsById = subjects.associateBy { it.id }
+
+        // Compute Highest Marks in Class per (classId, subjectId)
+        val highestByClassSubject = mutableMapOf<Pair<String, String>, Double>()
+        marks.forEach { m ->
+            val subMax = subjectsById[m.subjectId]?.maxMarks ?: 1000.0
+            val clamped = m.obtainedMarks.coerceIn(0.0, subMax)
+            val key = m.classId to m.subjectId
+            val prev = highestByClassSubject[key]
+            if (prev == null || clamped > prev) {
+                highestByClassSubject[key] = clamped
+            }
+        }
+        val examComponents = examination?.components.orEmpty()
 
         val rawSummaries = students.map { student ->
             val classSubjects = sortedSubjects.filter { it.classId == student.classId }
             val subjectResults = classSubjects.map { sub ->
                 val mark = marksByStudentAndSubject["${student.id}_${sub.id}"]
-                calculateSubjectResult(sub, mark, activeRules)
+                val highest = highestByClassSubject[student.classId to sub.id]
+                calculateSubjectResult(sub, mark, activeRules, highest)
             }
             val enteredCount = subjectResults.count { it.entered }
             val totalCount = subjectResults.size
@@ -179,7 +197,7 @@ object ResultCalculator {
             val savedRecord = recordsByStudentId[student.id]
             val defaultTeacherRemark = when {
                 !isComplete -> "Result pending completion of all subjects."
-                passedOverall && overallPct >= 85.0 -> "Excellent academic performance. Keep it up!"
+                passedOverall && overallPct >= 85.0 -> "A marvelous result. Keep on aiming higher. We are proud of you."
                 passedOverall && overallPct >= 70.0 -> "Very good performance. Strive for higher distinction."
                 passedOverall -> "Satisfactory progress. More consistent practice recommended."
                 else -> "Needs focused attention and remedial support in weak subjects."
@@ -191,6 +209,8 @@ object ResultCalculator {
                 sectionName = sectionsById[student.sectionId]?.name ?: "-",
                 sessionName = sessionsById[student.sessionId]?.name ?: "-",
                 examName = examination?.name ?: "Examination",
+                examComponents = examComponents,
+                gradingRulesUsed = activeRules.sortedByDescending { it.minPercentage },
                 subjectResults = subjectResults,
                 enteredSubjectCount = enteredCount,
                 totalSubjectCount = totalCount,
@@ -252,7 +272,7 @@ object ResultCalculator {
             0.0
         }
         val gradeDist = linkedMapOf<String, Int>()
-        listOf("A+", "A", "B", "C", "D", "E", "F", "F*").forEach { g ->
+        listOf("A+", "A", "B+", "B", "C", "D", "E", "F", "F*").forEach { g ->
             val count = completed.count { it.overallGrade == g }
             if (count > 0) gradeDist[g] = count
         }
@@ -289,7 +309,13 @@ object ResultCalculator {
     }
 
     fun formatPercentage(value: Double): String =
-        String.format(java.util.Locale.US, "%.2f%%", value)
+        String.format(java.util.Locale.US, "%.1f%%", value)
+
+    fun formatPercentNumber(value: Double): String =
+        String.format(java.util.Locale.US, "%.1f", value)
+
+    fun sumComponentMarks(componentMarks: Map<String, Double>): Double =
+        componentMarks.values.sum()
 
     fun formatOrdinal(position: Int?): String {
         if (position == null || position <= 0) return "-"

@@ -51,12 +51,46 @@ data class UserProfile(
 
 @Keep
 @IgnoreExtraProperties
+data class ExamComponent(
+    val id: String = "",
+    val name: String = "",
+    val maxMarks: Double = 0.0
+)
+
+object StudentEntryField {
+    const val FATHER_NAME = "FATHER_NAME"
+    const val ROLL_NUMBER = "ROLL_NUMBER"
+    const val ADMISSION_NUMBER = "ADMISSION_NUMBER"
+    const val PHOTO = "PHOTO"
+
+    val defaultOptionalFields = listOf(FATHER_NAME, ROLL_NUMBER, ADMISSION_NUMBER)
+}
+
+object ExamComponentPresets {
+    fun consolidatedTaskPreset(): List<ExamComponent> = listOf(
+        ExamComponent(id = "task_01", name = "Assessment Task 01", maxMarks = 30.0),
+        ExamComponent(id = "quiz", name = "Quiz", maxMarks = 20.0)
+    )
+
+    fun midYearTermPreset(): List<ExamComponent> = listOf(
+        ExamComponent(id = "classwork", name = "Classwork Average", maxMarks = 10.0),
+        ExamComponent(id = "quiz", name = "Quiz", maxMarks = 10.0),
+        ExamComponent(id = "assess_1", name = "Assessment-I", maxMarks = 15.0),
+        ExamComponent(id = "assess_2", name = "Assessment-II", maxMarks = 25.0)
+    )
+}
+
+@Keep
+@IgnoreExtraProperties
 data class Campus(
     @DocumentId val id: String = "",
     val ownerId: String = "",
     val memberUids: List<String> = emptyList(),
     val schoolName: String = "THE EDUCATORS",
     val campusName: String = "ABBOTTABAD MAIN CAMPUS",
+    val address: String = "",
+    val contact: String = "",
+    val studentEntryFields: List<String> = StudentEntryField.defaultOptionalFields,
     val logoBase64: String? = null,
     val activeSessionId: String = "",
     val activeExamId: String = "",
@@ -106,6 +140,7 @@ data class Examination(
     val examType: String = ExamType.MIDTERM.name,
     val useCustomGrading: Boolean = false,
     val sortOrder: Long = 0L,
+    val components: List<ExamComponent> = emptyList(),
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {
@@ -183,6 +218,7 @@ data class MarkEntry(
     val studentId: String = "",
     val subjectId: String = "",
     val obtainedMarks: Double = 0.0,
+    val componentMarks: Map<String, Double> = emptyMap(),
     val enteredByUid: String = "",
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
@@ -234,6 +270,7 @@ data class SubjectResult(
     val subject: Subject,
     val markEntry: MarkEntry?,
     val obtainedMarks: Double?,
+    val highestMarksInClass: Double? = null,
     val percentage: Double?,
     val grade: String,
     val remarks: String,
@@ -247,6 +284,8 @@ data class StudentResultSummary(
     val sectionName: String,
     val sessionName: String,
     val examName: String,
+    val examComponents: List<ExamComponent> = emptyList(),
+    val gradingRulesUsed: List<GradingRule> = emptyList(),
     val subjectResults: List<SubjectResult>,
     val enteredSubjectCount: Int,
     val totalSubjectCount: Int,

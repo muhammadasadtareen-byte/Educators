@@ -72,7 +72,7 @@ class ResultSystemUnitTest {
     @Test
     fun `overall percentage uses total obtained divided by total max marks`() {
         // Math: 85/100 (85%), Islamiat: 25/50 (50%) -> unweighted average of % would be 67.5%,
-        // but weighted overall % MUST be (85 + 25) / (100 + 50) * 100 = 110 / 150 * 100 = 73.333% (Grade B)
+        // but weighted overall % MUST be (85 + 25) / (100 + 50) * 100 = 110 / 150 * 100 = 73.333% (Grade B+)
         val stu = Student(
             id = "stu_1",
             name = "Ali Ahmed",
@@ -106,7 +106,7 @@ class ResultSystemUnitTest {
         assertEquals(150.0, s.totalMaxMarks, 0.001)
         assertEquals(110.0, s.totalObtainedMarks, 0.001)
         assertEquals(73.333, s.overallPercentage, 0.01)
-        assertEquals("B", s.overallGrade)
+        assertEquals("B+", s.overallGrade)
         assertTrue(s.passed)
         assertEquals(1, s.position)
     }
@@ -369,7 +369,7 @@ class ResultSystemUnitTest {
         assertEquals("101", candidates[0].rollNumber)
         assertEquals("Hamza Tariq", candidates[0].name)
         assertEquals("Tariq Mehmood", candidates[0].fatherName)
-        assertEquals("ADM-101", candidates[0].admissionNumber)
+        assertEquals("", candidates[0].admissionNumber)
 
         assertEquals("102", candidates[1].rollNumber)
         assertEquals("Ayesha Siddiqui", candidates[1].name)
@@ -398,9 +398,135 @@ class ResultSystemUnitTest {
         assertEquals("Zainab Bibi", candidates[1].name)
         assertEquals("Shafqat Ali", candidates[1].fatherName)
 
-        assertEquals("5", candidates[2].rollNumber)
+        assertEquals("", candidates[2].rollNumber)
         assertEquals("Bilal Ahmed", candidates[2].name)
-        assertEquals("-", candidates[2].fatherName)
-        assertEquals("ADM-5", candidates[2].admissionNumber)
+        assertEquals("", candidates[2].fatherName)
+        assertEquals("", candidates[2].admissionNumber)
+    }
+
+    @Test
+    fun `parseStudentCandidates strips consolidated sheet marks percentages and trailing dots`() {
+        val consolidatedOcr = """
+            THE EDUCATORS
+            Consolidated Sheet
+            VIII - Mars *** ASSESSMENT TASK-I (TERM II)
+            Farhan Khalid . 27.00 16.00 20.00 14.00 297.75 66.2% B
+            Muhammad Bilal Tareen . 22.00 17.00 319.75 71.1% B+
+            Idrees Khalid 30.00 11.00 21.00 361.75 80.4% A
+        """.trimIndent()
+
+        val candidates = StudentDocumentExtractor.parseStudentCandidates(consolidatedOcr, startingRoll = 1)
+        assertEquals(3, candidates.size)
+        assertEquals("Farhan Khalid", candidates[0].name)
+        assertEquals("Muhammad Bilal Tareen", candidates[1].name)
+        assertEquals("Idrees Khalid", candidates[2].name)
+    }
+
+    @Test
+    fun `component exam computes highest marks in class and exports merged headers and grading key`() {
+        val compExam = defaultExam.copy(
+            id = "exam_comp",
+            name = "MID YEAR EXAMINATION",
+            components = listOf(
+                com.example.data.model.ExamComponent("classwork", "Classwork Average", 10.0),
+                com.example.data.model.ExamComponent("quiz", "Quiz", 10.0),
+                com.example.data.model.ExamComponent("assess_1", "Assessment-I", 15.0),
+                com.example.data.model.ExamComponent("assess_2", "Assessment-II", 25.0)
+            )
+        )
+        val eng = Subject(id = "sub_eng", classId = "cls_5", name = "English", maxMarks = 60.0, passingMarks = 24.0, sortOrder = 1)
+        val stu1 = Student(id = "s1", name = "Abiha Fatima", classId = "cls_5", sectionId = "sec_a", sessionId = "sess_1")
+        val stu2 = Student(id = "s2", name = "Hina Tariq", classId = "cls_5", sectionId = "sec_a", sessionId = "sess_1")
+
+        val marks = listOf(
+            MarkEntry(
+                id = "m1", classId = "cls_5", studentId = "s1", subjectId = "sub_eng", obtainedMarks = 59.0,
+                componentMarks = mapOf("classwork" to 9.0, "quiz" to 10.0, "assess_1" to 15.0, "assess_2" to 25.0)
+            ),
+            MarkEntry(
+                id = "m2", classId = "cls_5", studentId = "s2", subjectId = "sub_eng", obtainedMarks = 60.0,
+                componentMarks = mapOf("classwork" to 10.0, "quiz" to 10.0, "assess_1" to 15.0, "assess_2" to 25.0)
+            )
+        )
+
+        val summaries = ResultCalculator.computeClassResults(
+            students = listOf(stu1, stu2),
+            subjects = listOf(eng),
+            marks = marks,
+            resultRecords = emptyList(),
+            classesById = mapOf(schoolClass.id to schoolClass),
+            sectionsById = mapOf(sectionA.id to sectionA),
+            sessionsById = mapOf(session.id to session),
+            examination = compExam,
+            allGradingRules = ResultCalculator.defaultGradingTemplates()
+        )
+        val abiha = summaries.first { it.student.id == "s1" }
+        assertEquals(60.0, abiha.subjectResults.first().highestMarksInClass ?: 0.0, 0.001)
+        assertEquals(98.33, abiha.overallPercentage, 0.05)
+        assertEquals("A+", abiha.overallGrade)
+
+        val consolidatedXlsx = XlsxEngine.exportCompleteClassResultSheet(
+            className = "Class 5",
+            sectionLabel = "A",
+            examName = compExam.name,
+            sessionName = session.name,
+            subjects = listOf(eng),
+            summaries = summaries,
+            examComponents = compExam.components
+        )
+        val consolidatedXml = readSheet1Xml(consolidatedXlsx)
+        assertTrue(consolidatedXml.contains("<mergeCells"))
+        assertTrue(consolidatedXml.contains("Consolidated Sheet"))
+
+        val individualXlsx = XlsxEngine.exportIndividualStudentResult(abiha)
+        val individualXml = readSheet1Xml(individualXlsx)
+        assertTrue(individualXml.contains("GRADING KEY"))
+        assertTrue(individualXml.contains("GRAND TOTAL"))
+        assertTrue(individualXml.contains("Highest Marks in Class"))
+    }
+
+    @Test
+    fun `parseAndValidateStudents accepts minimal columns with optional fields omitted`() {
+        val minimalWorkbook = XlsxEngine.writeWorkbook(
+            listOf(
+                com.example.domain.XlsxSheetData(
+                    name = "Students",
+                    headers = listOf("Student Name", "Class"),
+                    rows = listOf(
+                        listOf(
+                            com.example.domain.CellValue.Text("Zoya Malik"),
+                            com.example.domain.CellValue.Text("Class 5")
+                        )
+                    )
+                )
+            )
+        )
+        val preview = XlsxEngine.parseAndValidateStudents(
+            inputStream = ByteArrayInputStream(minimalWorkbook),
+            classes = listOf(schoolClass),
+            sections = listOf(sectionA),
+            sessions = listOf(session),
+            existingStudents = emptyList(),
+            defaultSessionId = session.id
+        )
+        assertEquals(1, preview.validRows.size)
+        assertTrue(preview.errors.isEmpty())
+        assertEquals("Zoya Malik", preview.validRows.first().name)
+        assertEquals("", preview.validRows.first().fatherName)
+        assertEquals("", preview.validRows.first().rollNumber)
+        assertEquals("", preview.validRows.first().admissionNumber)
+    }
+
+    private fun readSheet1Xml(xlsxBytes: ByteArray): String {
+        java.util.zip.ZipInputStream(ByteArrayInputStream(xlsxBytes)).use { zis ->
+            var entry = zis.nextEntry
+            while (entry != null) {
+                if (entry.name == "xl/worksheets/sheet1.xml") {
+                    return zis.readBytes().toString(Charsets.UTF_8)
+                }
+                entry = zis.nextEntry
+            }
+        }
+        return ""
     }
 }

@@ -52,6 +52,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material3.FilterChip
+import com.example.data.model.StudentEntryField
 import com.example.domain.DocumentSourceKind
 import com.example.domain.ExtractedStudentCandidate
 import com.example.domain.ImportedStudentDraft
@@ -65,6 +69,7 @@ import com.example.ui.theme.EducatorsNavy
 import com.example.ui.theme.EmeraldPass
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun StudentExtractImportDialog(
     snapshot: SchoolSnapshot,
@@ -92,6 +97,9 @@ fun StudentExtractImportDialog(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var rawExtractedText by remember { mutableStateOf("") }
     var showRawText by remember { mutableStateOf(false) }
+    var enabledFields by remember(snapshot.campus.studentEntryFields) {
+        mutableStateOf(snapshot.campus.studentEntryFields.toSet())
+    }
 
     val candidates = remember { mutableStateListOf<ExtractedStudentCandidate>() }
 
@@ -254,6 +262,32 @@ fun StudentExtractImportDialog(
                     onSelect = { selectedSessionId = it.id }
                 )
 
+                Text(
+                    text = "Which entries do you want to include?",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = EducatorsNavy
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    FilterChip(selected = true, onClick = {}, label = { Text("Name (Required)") })
+                    listOf(
+                        StudentEntryField.FATHER_NAME to "Father's Name",
+                        StudentEntryField.ROLL_NUMBER to "Roll No",
+                        StudentEntryField.ADMISSION_NUMBER to "Admission No"
+                    ).forEach { (key, label) ->
+                        val active = enabledFields.contains(key)
+                        FilterChip(
+                            selected = active,
+                            onClick = {
+                                enabledFields = if (active) enabledFields - key else enabledFields + key
+                            },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+
                 if (isExtracting) {
                     Row(
                         modifier = Modifier
@@ -335,15 +369,13 @@ fun StudentExtractImportDialog(
                         )
                         TextButton(
                             onClick = {
-                                val nextRoll = (candidates.mapNotNull { it.rollNumber.toIntOrNull() }.maxOrNull()
-                                    ?: (nextStartingRoll() + candidates.size - 1)) + 1
                                 candidates.add(
                                     ExtractedStudentCandidate(
                                         tempId = "manual_${System.nanoTime()}",
-                                        rollNumber = nextRoll.toString(),
+                                        rollNumber = "",
                                         name = "",
-                                        fatherName = "-",
-                                        admissionNumber = "ADM-$nextRoll"
+                                        fatherName = "",
+                                        admissionNumber = ""
                                     )
                                 )
                             }
@@ -353,6 +385,10 @@ fun StudentExtractImportDialog(
                             Text("Add Row")
                         }
                     }
+
+                    val includeRoll = enabledFields.contains(StudentEntryField.ROLL_NUMBER)
+                    val includeFather = enabledFields.contains(StudentEntryField.FATHER_NAME)
+                    val includeAdm = enabledFields.contains(StudentEntryField.ADMISSION_NUMBER)
 
                     candidates.forEachIndexed { idx, item ->
                         Surface(
@@ -375,22 +411,21 @@ fun StudentExtractImportDialog(
                                             candidates[idx] = item.copy(selected = checked)
                                         }
                                     )
-                                    OutlinedTextField(
-                                        value = item.rollNumber,
-                                        onValueChange = { r ->
-                                            candidates[idx] = item.copy(
-                                                rollNumber = r,
-                                                admissionNumber = if (item.admissionNumber == "ADM-${item.rollNumber}") "ADM-$r" else item.admissionNumber
-                                            )
-                                        },
-                                        label = { Text("Roll") },
-                                        singleLine = true,
-                                        modifier = Modifier.width(76.dp)
-                                    )
+                                    if (includeRoll) {
+                                        OutlinedTextField(
+                                            value = item.rollNumber,
+                                            onValueChange = { r ->
+                                                candidates[idx] = item.copy(rollNumber = r)
+                                            },
+                                            label = { Text("Roll") },
+                                            singleLine = true,
+                                            modifier = Modifier.width(74.dp)
+                                        )
+                                    }
                                     OutlinedTextField(
                                         value = item.name,
                                         onValueChange = { n -> candidates[idx] = item.copy(name = n) },
-                                        label = { Text("Student Name") },
+                                        label = { Text("Student Name *") },
                                         singleLine = true,
                                         modifier = Modifier.weight(1f)
                                     )
@@ -398,16 +433,28 @@ fun StudentExtractImportDialog(
                                         Icon(Icons.Default.Delete, contentDescription = "Remove row", tint = CrimsonFail)
                                     }
                                 }
-                                OutlinedTextField(
-                                    value = if (item.fatherName == "-") "" else item.fatherName,
-                                    onValueChange = { f ->
-                                        candidates[idx] = item.copy(fatherName = f.ifBlank { "-" })
-                                    },
-                                    label = { Text("Father's Name (optional)") },
-                                    placeholder = { Text("-") },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
+                                if (includeFather) {
+                                    OutlinedTextField(
+                                        value = if (item.fatherName == "-") "" else item.fatherName,
+                                        onValueChange = { f ->
+                                            candidates[idx] = item.copy(fatherName = f)
+                                        },
+                                        label = { Text("Father's Name (Optional)") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                                if (includeAdm) {
+                                    OutlinedTextField(
+                                        value = item.admissionNumber,
+                                        onValueChange = { a ->
+                                            candidates[idx] = item.copy(admissionNumber = a)
+                                        },
+                                        label = { Text("Admission No (Optional)") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
                             }
                         }
                     }
@@ -424,15 +471,17 @@ fun StudentExtractImportDialog(
                         errorMessage = "Please select Class, Section, and Academic Session."
                         return@Button
                     }
+                    val includeRoll = enabledFields.contains(StudentEntryField.ROLL_NUMBER)
+                    val includeFather = enabledFields.contains(StudentEntryField.FATHER_NAME)
+                    val includeAdm = enabledFields.contains(StudentEntryField.ADMISSION_NUMBER)
                     val drafts = candidates
                         .filter { it.selected && it.name.trim().isNotEmpty() }
-                        .mapIndexed { idx, c ->
-                            val roll = c.rollNumber.trim().ifBlank { (nextStartingRoll() + idx).toString() }
+                        .map { c ->
                             ImportedStudentDraft(
                                 name = c.name.trim(),
-                                fatherName = c.fatherName.trim().ifBlank { "-" },
-                                rollNumber = roll,
-                                admissionNumber = c.admissionNumber.trim().ifBlank { "ADM-$roll" },
+                                fatherName = if (includeFather) c.fatherName.trim().takeIf { it != "-" }.orEmpty() else "",
+                                rollNumber = if (includeRoll) c.rollNumber.trim() else "",
+                                admissionNumber = if (includeAdm) c.admissionNumber.trim() else "",
                                 classId = cls.id,
                                 className = cls.name,
                                 sectionId = sec.id,

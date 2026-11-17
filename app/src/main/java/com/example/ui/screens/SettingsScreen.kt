@@ -70,10 +70,12 @@ import androidx.compose.ui.unit.dp
 import androidx.credentials.CredentialManager
 import com.example.R
 import com.example.data.firebase.AuthHelper
+import com.example.data.model.ExamComponent
 import com.example.data.model.ExamType
 import com.example.data.model.Examination
 import com.example.data.model.GradingRule
 import com.example.data.model.StaffRole
+import com.example.data.model.StudentEntryField
 import com.example.domain.PdfReportGenerator
 import com.example.ui.MainViewModel
 import com.example.ui.SchoolSnapshot
@@ -98,6 +100,11 @@ fun SettingsScreen(
 
     var schoolName by remember(snapshot.campus.schoolName) { mutableStateOf(snapshot.campus.schoolName) }
     var campusName by remember(snapshot.campus.campusName) { mutableStateOf(snapshot.campus.campusName) }
+    var campusAddress by remember(snapshot.campus.address) { mutableStateOf(snapshot.campus.address) }
+    var campusContact by remember(snapshot.campus.contact) { mutableStateOf(snapshot.campus.contact) }
+    var studentEntryFields by remember(snapshot.campus.studentEntryFields) {
+        mutableStateOf(snapshot.campus.studentEntryFields.toSet())
+    }
     var allowDecimalMarks by remember(snapshot.campus.allowDecimalMarks) { mutableStateOf(snapshot.campus.allowDecimalMarks) }
     var logoBase64 by remember(snapshot.campus.logoBase64) { mutableStateOf(snapshot.campus.logoBase64) }
 
@@ -264,6 +271,49 @@ fun SettingsScreen(
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
+                        OutlinedTextField(
+                            value = campusAddress,
+                            onValueChange = { campusAddress = it },
+                            label = { Text("Campus Address (for Consolidated Sheet & Reports)") },
+                            placeholder = { Text("e.g. Kala Pul, Mansehra Road, Abbottabad") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = campusContact,
+                            onValueChange = { campusContact = it },
+                            label = { Text("Contact Number") },
+                            placeholder = { Text("e.g. 0992-406672") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Text(
+                            text = "Default Optional Entries When Adding Students",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = EducatorsNavy
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            val fieldOptions = listOf(
+                                StudentEntryField.FATHER_NAME to "Father's Name",
+                                StudentEntryField.ROLL_NUMBER to "Roll No",
+                                StudentEntryField.ADMISSION_NUMBER to "Admission No",
+                                StudentEntryField.PHOTO to "Photo"
+                            )
+                            fieldOptions.forEach { (key, label) ->
+                                val selected = studentEntryFields.contains(key)
+                                FilterChip(
+                                    selected = selected,
+                                    onClick = {
+                                        studentEntryFields = if (selected) studentEntryFields - key else studentEntryFields + key
+                                    },
+                                    label = { Text(label) }
+                                )
+                            }
+                        }
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -287,6 +337,9 @@ fun SettingsScreen(
                                     campus = snapshot.campus,
                                     schoolName = schoolName,
                                     campusName = campusName,
+                                    address = campusAddress,
+                                    contact = campusContact,
+                                    studentEntryFields = studentEntryFields.toList(),
                                     allowDecimalMarks = allowDecimalMarks,
                                     activeSessionId = snapshot.selectedSessionId,
                                     activeExamId = snapshot.selectedExamId,
@@ -594,14 +647,15 @@ fun SettingsScreen(
             defaultSortOrder = (snapshot.examinations.size + 1).toLong(),
             canDelete = false,
             onDismiss = { showAddExamDialog = false },
-            onSave = { name, examType, sessionId, customGrading, sortOrder ->
+            onSave = { name, examType, sessionId, customGrading, sortOrder, components ->
                 viewModel.addExamination(
                     campus = snapshot.campus,
                     sessionId = sessionId,
                     name = name,
                     examType = examType,
                     useCustomGrading = customGrading,
-                    sortOrder = sortOrder
+                    sortOrder = sortOrder,
+                    components = components
                 )
                 showAddExamDialog = false
             }
@@ -616,7 +670,7 @@ fun SettingsScreen(
             defaultSortOrder = target.sortOrder,
             canDelete = snapshot.examinations.size > 1,
             onDismiss = { editingExam = null },
-            onSave = { name, examType, sessionId, customGrading, sortOrder ->
+            onSave = { name, examType, sessionId, customGrading, sortOrder, components ->
                 viewModel.updateExamination(
                     campusId = snapshot.campus.id,
                     examId = target.id,
@@ -624,7 +678,8 @@ fun SettingsScreen(
                     name = name,
                     examType = examType,
                     useCustomGrading = customGrading,
-                    sortOrder = sortOrder
+                    sortOrder = sortOrder,
+                    components = components
                 )
                 editingExam = null
             },

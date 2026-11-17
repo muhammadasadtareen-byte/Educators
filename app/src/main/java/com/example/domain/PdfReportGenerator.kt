@@ -6,7 +6,6 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
@@ -21,36 +20,56 @@ import android.print.PrintManager
 import android.util.Base64
 import com.example.R
 import com.example.data.model.ClassPerformanceStats
+import com.example.data.model.ExamComponent
 import com.example.data.model.ResultStatus
 import com.example.data.model.StudentResultSummary
 import com.example.data.model.Subject
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.util.Locale
+import kotlin.math.ceil
 
 object PdfReportGenerator {
 
     private const val A4_WIDTH = 595
     private const val A4_HEIGHT = 842
-    private const val MARGIN = 34f
+    private const val A4_LANDSCAPE_WIDTH = 842
+    private const val A4_LANDSCAPE_HEIGHT = 595
+    private const val MARGIN = 30f
 
     private val navyColor = Color.parseColor("#08408A")
+    private val tealColor = Color.parseColor("#0B4F6C")
     private val blueColor = Color.parseColor("#1565C0")
+    private val ribbonRoseColor = Color.parseColor("#C83E6B")
     private val lightBlueBg = Color.parseColor("#EAF2FF")
-    private val borderColor = Color.parseColor("#CBD5E1")
+    private val lightGrayHeaderBg = Color.parseColor("#D8DEE9")
+    private val borderColor = Color.parseColor("#64748B")
+    private val lightBorderColor = Color.parseColor("#CBD5E1")
     private val darkText = Color.parseColor("#0F172A")
     private val mutedText = Color.parseColor("#475569")
     private val goldColor = Color.parseColor("#D97706")
     private val passGreen = Color.parseColor("#15803D")
     private val failRed = Color.parseColor("#B91C1C")
 
-    // 1. Individual & Batch Student Result Cards (1 per A4 page)
+    private val chartPalette = listOf(
+        Color.parseColor("#1D4ED8"), // Component 1 / Blue
+        Color.parseColor("#0891B2"), // Component 2 / Cyan
+        Color.parseColor("#7C3AED"), // Component 3 / Purple
+        Color.parseColor("#D97706"), // Component 4 / Amber
+        Color.parseColor("#0F766E"), // Obtained / Teal
+        Color.parseColor("#0F172A")  // Highest in Class / Slate Navy
+    )
+
+    // 1. Individual & Batch Student Progress Reports (1 per Portrait A4 page)
     fun generateResultCardsPdf(
         context: Context,
         summaries: List<StudentResultSummary>,
         schoolName: String,
         campusName: String,
-        schoolLogoBase64: String?
+        schoolLogoBase64: String?,
+        address: String = "",
+        contact: String = ""
     ): File {
         val doc = PdfDocument()
         val logoBitmap = decodeLogoBitmap(context, schoolLogoBase64)
@@ -64,6 +83,8 @@ object PdfReportGenerator {
                 summary = summary,
                 schoolName = schoolName,
                 campusName = campusName,
+                address = address,
+                contact = contact,
                 logoBitmap = logoBitmap,
                 pageNumber = idx + 1,
                 totalPages = totalPages
@@ -72,14 +93,15 @@ object PdfReportGenerator {
         }
 
         val fileName = if (summaries.size == 1) {
-            "ResultCard_${summaries.first().student.rollNumber}_${summaries.first().student.name.replace(" ", "_")}.pdf"
+            val rollPrefix = summaries.first().student.rollNumber.takeIf { it.isNotBlank() }?.let { "${it}_" } ?: ""
+            "ProgressReport_${rollPrefix}${summaries.first().student.name.replace(" ", "_")}.pdf"
         } else {
-            "All_ResultCards_${System.currentTimeMillis()}.pdf"
+            "All_ProgressReports_${System.currentTimeMillis()}.pdf"
         }
         return savePdfToExports(context, doc, fileName)
     }
 
-    // 2. Complete Class Result Sheet (Multi-page A4)
+    // 2. Complete Class Consolidated Sheet (Multi-page Landscape A4 matching school format)
     fun generateClassResultSheetPdf(
         context: Context,
         schoolName: String,
@@ -90,87 +112,259 @@ object PdfReportGenerator {
         examName: String,
         sessionName: String,
         subjects: List<Subject>,
-        summaries: List<StudentResultSummary>
+        summaries: List<StudentResultSummary>,
+        address: String = "",
+        contact: String = "",
+        examComponents: List<ExamComponent> = emptyList()
     ): File {
         val doc = PdfDocument()
         val logoBitmap = decodeLogoBitmap(context, schoolLogoBase64)
         val sortedSubjects = subjects.sortedWith(compareBy<Subject> { it.sortOrder }.thenBy { it.name })
-        val rowsPerPage = 22
+        val rowsPerPage = 20
         val chunks = if (summaries.isEmpty()) listOf(emptyList()) else summaries.chunked(rowsPerPage)
         val totalPages = chunks.size
+        val useComponents = examComponents.isNotEmpty() && sortedSubjects.isNotEmpty()
+        val totalMax = sortedSubjects.sumOf { it.maxMarks }
 
         chunks.forEachIndexed { pageIdx, pageRows ->
-            val pageInfo = PdfDocument.PageInfo.Builder(A4_WIDTH, A4_HEIGHT, pageIdx + 1).create()
+            val pageInfo = PdfDocument.PageInfo.Builder(A4_LANDSCAPE_WIDTH, A4_LANDSCAPE_HEIGHT, pageIdx + 1).create()
             val page = doc.startPage(pageInfo)
             val canvas = page.canvas
 
-            var y = drawStandardHeader(
-                canvas = canvas,
-                schoolName = schoolName,
-                campusName = campusName,
-                reportTitle = "CLASS RESULT SHEET — $className ($sectionLabel)",
-                subtitle = "$examName | Session: $sessionName",
-                logoBitmap = logoBitmap
-            )
-
-            // Column layout
-            val usableW = A4_WIDTH - 2 * MARGIN
-            val fixedWidths = floatArrayOf(34f, 108f) // Roll, Name
-            val tailWidths = floatArrayOf(44f, 44f, 40f, 34f, 42f) // Total, Obt, %, Gr, Pos/St
-            val subCount = sortedSubjects.size.coerceAtLeast(1)
-            val remainingW = (usableW - fixedWidths.sum() - tailWidths.sum()).coerceAtLeast(60f)
-            val subColW = remainingW / subCount
-
-            val colWidths = buildList {
-                add(fixedWidths[0])
-                add(fixedWidths[1])
-                repeat(sortedSubjects.size) { add(subColW) }
-                tailWidths.forEach { add(it) }
+            // Outer box border
+            val framePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tealColor
+                style = Paint.Style.STROKE
+                strokeWidth = 1.6f
             }
-            val headers = buildList {
-                add("Roll")
-                add("Student Name")
-                sortedSubjects.forEach { add(it.name.take(6)) }
-                add("Total")
-                add("Obt.")
-                add("%")
-                add("Gr.")
-                add("Pos/St")
+            canvas.drawRect(18f, 18f, A4_LANDSCAPE_WIDTH - 18f, A4_LANDSCAPE_HEIGHT - 18f, framePaint)
+
+            // Left and right crest logos
+            if (logoBitmap != null) {
+                canvas.drawBitmap(logoBitmap, null, RectF(26f, 24f, 74f, 72f), null)
+                canvas.drawBitmap(logoBitmap, null, RectF(A4_LANDSCAPE_WIDTH - 74f, 24f, A4_LANDSCAPE_WIDTH - 26f, 72f), null)
             }
 
-            y = drawTableHeaderRow(canvas, MARGIN, y, colWidths, headers, rowHeight = 24f)
+            // Centered Consolidated Sheet Header
+            val centerX = A4_LANDSCAPE_WIDTH / 2f
+            val hTitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tealColor
+                textSize = 15.5f
+                typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+                textAlign = Paint.Align.CENTER
+            }
+            val hCampusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tealColor
+                textSize = 12f
+                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+                textAlign = Paint.Align.CENTER
+            }
+            val hMetaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tealColor
+                textSize = 9.5f
+                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+                textAlign = Paint.Align.CENTER
+            }
+            val hSheetTitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tealColor
+                textSize = 11.5f
+                typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+                isUnderlineText = true
+                textAlign = Paint.Align.CENTER
+            }
+            val hExamPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tealColor
+                textSize = 11f
+                typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+                textAlign = Paint.Align.CENTER
+            }
 
+            var y = 37f
+            canvas.drawText(schoolName.uppercase(), centerX, y, hTitlePaint)
+            y += 14f
+            canvas.drawText(campusName.uppercase(), centerX, y, hCampusPaint)
+            if (address.isNotBlank()) {
+                y += 12f
+                canvas.drawText("Address: $address", centerX, y, hMetaPaint)
+            }
+            if (contact.isNotBlank()) {
+                y += 11f
+                canvas.drawText("Contact: $contact", centerX, y, hMetaPaint)
+            }
+            y += 14f
+            canvas.drawText("Consolidated Sheet", centerX, y, hSheetTitlePaint)
+            y += 14f
+            canvas.drawText("$className - $sectionLabel *** ${examName.uppercase()}", centerX, y, hExamPaint)
+            y += 10f
+
+            // Compute landscape column widths
+            val startX = 26f
+            val usableW = A4_LANDSCAPE_WIDTH - 52f // 790f
+            val nameW = 108f
+            val obtW = 46f
+            val pctW = 38f
+            val gradeW = 32f
+            val middleTotalW = (usableW - nameW - obtW - pctW - gradeW).coerceAtLeast(120f)
+
+            val subColWidths = mutableListOf<Float>()
+            val headerBgPaint = Paint().apply { color = tealColor }
+            val headerStrokePaint = Paint().apply { color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 0.7f }
+            val headerTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.WHITE
+                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+                textAlign = Paint.Align.CENTER
+            }
+
+            if (useComponents) {
+                val totalSubCols = sortedSubjects.size * examComponents.size
+                val compColW = (middleTotalW / totalSubCols.coerceAtLeast(1))
+                val topRowH = 18f
+                val subRowH = 18f
+                val totalHeaderH = topRowH + subRowH
+
+                // Name vertical cell
+                val nameRect = RectF(startX, y, startX + nameW, y + totalHeaderH)
+                canvas.drawRect(nameRect, headerBgPaint)
+                canvas.drawRect(nameRect, headerStrokePaint)
+                headerTextPaint.textSize = 9.5f
+                headerTextPaint.textAlign = Paint.Align.LEFT
+                canvas.drawText("Name", startX + 4f, y + totalHeaderH / 2f + 3f, headerTextPaint)
+                headerTextPaint.textAlign = Paint.Align.CENTER
+
+                var x = startX + nameW
+                sortedSubjects.forEach { sub ->
+                    val groupW = compColW * examComponents.size
+                    val topRect = RectF(x, y, x + groupW, y + topRowH)
+                    canvas.drawRect(topRect, headerBgPaint)
+                    canvas.drawRect(topRect, headerStrokePaint)
+                    headerTextPaint.textSize = if (sortedSubjects.size > 7) 7.5f else 8.5f
+                    canvas.drawText(fitText(sub.name, groupW - 4f, headerTextPaint), x + groupW / 2f, y + topRowH / 2f + 3f, headerTextPaint)
+
+                    examComponents.forEach { comp ->
+                        val compRect = RectF(x, y + topRowH, x + compColW, y + totalHeaderH)
+                        canvas.drawRect(compRect, headerBgPaint)
+                        canvas.drawRect(compRect, headerStrokePaint)
+                        headerTextPaint.textSize = if (totalSubCols > 14) 5.5f else 6.8f
+                        val label = "${comp.name.take(14)} (${ResultCalculator.formatMarks(comp.maxMarks)})"
+                        canvas.drawText(fitText(label, compColW - 2f, headerTextPaint), x + compColW / 2f, y + topRowH + subRowH / 2f + 2.2f, headerTextPaint)
+                        subColWidths.add(compColW)
+                        x += compColW
+                    }
+                }
+
+                // Obt., % age, Grade vertical cells
+                val tailHeaders = listOf(
+                    "Obt. (${ResultCalculator.formatMarks(totalMax)})" to obtW,
+                    "% age" to pctW,
+                    "Grade" to gradeW
+                )
+                headerTextPaint.textSize = 8f
+                tailHeaders.forEach { (lbl, w) ->
+                    val rect = RectF(x, y, x + w, y + totalHeaderH)
+                    canvas.drawRect(rect, headerBgPaint)
+                    canvas.drawRect(rect, headerStrokePaint)
+                    canvas.drawText(fitText(lbl, w - 3f, headerTextPaint), x + w / 2f, y + totalHeaderH / 2f + 3f, headerTextPaint)
+                    x += w
+                }
+                y += totalHeaderH
+            } else {
+                val subCount = sortedSubjects.size.coerceAtLeast(1)
+                val singleSubW = middleTotalW / subCount
+                val colWidths = buildList {
+                    add(nameW)
+                    repeat(sortedSubjects.size) { add(singleSubW); subColWidths.add(singleSubW) }
+                    add(obtW); add(pctW); add(gradeW)
+                }
+                val headers = buildList {
+                    add("Name")
+                    sortedSubjects.forEach { add("${it.name} (${ResultCalculator.formatMarks(it.maxMarks)})") }
+                    add("Obt. (${ResultCalculator.formatMarks(totalMax)})")
+                    add("% age")
+                    add("Grade")
+                }
+                val rowH = 22f
+                var x = startX
+                headerTextPaint.textSize = if (colWidths.size > 10) 7.5f else 8.5f
+                headers.forEachIndexed { idx, h ->
+                    val w = colWidths[idx]
+                    val rect = RectF(x, y, x + w, y + rowH)
+                    canvas.drawRect(rect, headerBgPaint)
+                    canvas.drawRect(rect, headerStrokePaint)
+                    headerTextPaint.textAlign = if (idx == 0) Paint.Align.LEFT else Paint.Align.CENTER
+                    val tx = if (idx == 0) x + 4f else x + w / 2f
+                    canvas.drawText(fitText(h, w - 4f, headerTextPaint), tx, y + rowH / 2f + 3f, headerTextPaint)
+                    x += w
+                }
+                y += rowH
+            }
+
+            // Data rows
+            val rowH = 19f
+            val allWidths = listOf(nameW) + subColWidths + listOf(obtW, pctW, gradeW)
             val cellPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = darkText
-                textSize = if (sortedSubjects.size > 7) 7.5f else 8.5f
+                textSize = if (allWidths.size > 16) 7f else 8.2f
             }
-            val rowH = 22f
-            pageRows.forEachIndexed { idx, summary ->
-                val bg = if (idx % 2 == 1) Color.parseColor("#F8FAFC") else Color.WHITE
-                val cells = buildList {
-                    add(summary.student.rollNumber)
-                    add(summary.student.name.take(18))
-                    sortedSubjects.forEach { sub ->
-                        val sr = summary.subjectResults.firstOrNull { it.subject.id == sub.id }
-                        add(sr?.obtainedMarks?.let { ResultCalculator.formatMarks(it) } ?: "-")
+            val cellStroke = Paint().apply { color = borderColor; style = Paint.Style.STROKE; strokeWidth = 0.6f }
+
+            pageRows.forEachIndexed { rIdx, summary ->
+                val bg = if (rIdx % 2 == 1) Color.parseColor("#F8FAFC") else Color.WHITE
+                val bgPaint = Paint().apply { color = bg }
+                val values = buildList {
+                    add(summary.student.name)
+                    if (useComponents) {
+                        sortedSubjects.forEach { sub ->
+                            val sr = summary.subjectResults.firstOrNull { it.subject.id == sub.id }
+                            examComponents.forEach { comp ->
+                                val compMark = sr?.markEntry?.componentMarks?.get(comp.id)
+                                add(compMark?.let { ResultCalculator.formatMarks(it) } ?: "-")
+                            }
+                        }
+                    } else {
+                        sortedSubjects.forEach { sub ->
+                            val sr = summary.subjectResults.firstOrNull { it.subject.id == sub.id }
+                            add(sr?.obtainedMarks?.let { ResultCalculator.formatMarks(it) } ?: "-")
+                        }
                     }
-                    add(ResultCalculator.formatMarks(summary.totalMaxMarks))
                     add(ResultCalculator.formatMarks(summary.totalObtainedMarks))
-                    add(String.format(java.util.Locale.US, "%.1f", summary.overallPercentage))
+                    add(String.format(Locale.US, "%.1f%%", summary.overallPercentage))
                     add(summary.overallGrade)
-                    val posText = if (summary.status == ResultStatus.INCOMPLETE) "Inc"
-                    else if (summary.passed) ResultCalculator.formatOrdinal(summary.position)
-                    else "Fail"
-                    add(posText)
                 }
-                y = drawTableDataRow(canvas, MARGIN, y, colWidths, cells, rowH, bg, cellPaint)
+
+                var x = startX
+                values.forEachIndexed { cIdx, v ->
+                    val w = allWidths[cIdx]
+                    val rect = RectF(x, y, x + w, y + rowH)
+                    canvas.drawRect(rect, bgPaint)
+                    canvas.drawRect(rect, cellStroke)
+                    cellPaint.color = if (cIdx == values.lastIndex && !summary.passed && summary.status == ResultStatus.COMPLETE) {
+                        failRed
+                    } else darkText
+                    cellPaint.typeface = if (cIdx == 0 || cIdx >= values.size - 3) {
+                        Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+                    } else Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+                    cellPaint.textAlign = if (cIdx == 0) Paint.Align.LEFT else Paint.Align.CENTER
+                    val tx = if (cIdx == 0) x + 3.5f else x + w / 2f
+                    canvas.drawText(fitText(v, w - 3f, cellPaint), tx, y + rowH / 2f + 2.8f, cellPaint)
+                    x += w
+                }
+                y += rowH
             }
 
-            drawPageFooter(canvas, pageIdx + 1, totalPages)
+            // Footer
+            val footerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tealColor
+                textSize = 8f
+            }
+            footerPaint.textAlign = Paint.Align.LEFT
+            canvas.drawText("$schoolName — $campusName", startX, A4_LANDSCAPE_HEIGHT - 26f, footerPaint)
+            footerPaint.textAlign = Paint.Align.RIGHT
+            canvas.drawText("Page ${pageIdx + 1}/$totalPages  •  Session: $sessionName", A4_LANDSCAPE_WIDTH - 26f, A4_LANDSCAPE_HEIGHT - 26f, footerPaint)
+
             doc.finishPage(page)
         }
 
-        return savePdfToExports(context, doc, "ClassResult_${className.replace(" ", "_")}.pdf")
+        return savePdfToExports(context, doc, "Consolidated_Sheet_${className.replace(" ", "_")}.pdf")
     }
 
     // 3. Subject-Wise Marks Sheet PDF
@@ -205,7 +399,7 @@ object PdfReportGenerator {
                 logoBitmap
             )
 
-            val colWidths = listOf(55f, 145f, 125f, 65f, 65f, 40f, 32f)
+            val colWidths = listOf(55f, 145f, 125f, 65f, 65f, 45f, 35f)
             val headers = listOf("Roll No", "Student Name", "Father's Name", "Max Marks", "Obtained", "%", "Grade")
             y = drawTableHeaderRow(canvas, MARGIN, y, colWidths, headers, 24f)
 
@@ -214,18 +408,18 @@ object PdfReportGenerator {
                 val sr = summary.subjectResults.firstOrNull { it.subject.id == subject.id }
                 val bg = if (idx % 2 == 1) Color.parseColor("#F8FAFC") else Color.WHITE
                 val cells = listOf(
-                    summary.student.rollNumber,
+                    summary.student.rollNumber.ifBlank { "-" },
                     summary.student.name.take(24),
-                    summary.student.fatherName.take(20),
+                    summary.student.fatherName.takeIf { it.isNotBlank() && it != "-" }?.take(20) ?: "",
                     ResultCalculator.formatMarks(subject.maxMarks),
                     sr?.obtainedMarks?.let { ResultCalculator.formatMarks(it) } ?: "Pending",
-                    sr?.percentage?.let { String.format(java.util.Locale.US, "%.1f%%", it) } ?: "-",
+                    sr?.percentage?.let { String.format(Locale.US, "%.1f%%", it) } ?: "-",
                     sr?.grade ?: "-"
                 )
                 y = drawTableDataRow(canvas, MARGIN, y, colWidths, cells, 22f, bg, cellPaint)
             }
 
-            drawPageFooter(canvas, pageIdx + 1, totalPages)
+            drawPageFooter(canvas, campusName, pageIdx + 1, totalPages)
             doc.finishPage(page)
         }
         return savePdfToExports(context, doc, "SubjectMarks_${subject.name.replace(" ", "_")}.pdf")
@@ -256,7 +450,7 @@ object PdfReportGenerator {
             logoBitmap
         )
 
-        val colWidths = listOf(105f, 65f, 70f, 65f, 55f, 55f, 60f, 52f)
+        val colWidths = listOf(108f, 65f, 70f, 65f, 55f, 55f, 62f, 55f)
         val headers = listOf("Class", "Students", "Completed", "Pending", "Pass", "Fail", "Pass %", "Avg %")
         y = drawTableHeaderRow(canvas, MARGIN, y, colWidths, headers, 24f)
 
@@ -271,13 +465,13 @@ object PdfReportGenerator {
                 st.pendingResults.toString(),
                 st.passedCount.toString(),
                 st.failedCount.toString(),
-                String.format(java.util.Locale.US, "%.1f%%", passRate),
-                String.format(java.util.Locale.US, "%.1f%%", st.averagePercentage)
+                String.format(Locale.US, "%.1f%%", passRate),
+                String.format(Locale.US, "%.1f%%", st.averagePercentage)
             )
             y = drawTableDataRow(canvas, MARGIN, y, colWidths, cells, 22f, bg, cellPaint)
         }
 
-        drawPageFooter(canvas, 1, 1)
+        drawPageFooter(canvas, campusName, 1, 1)
         doc.finishPage(page)
         return savePdfToExports(context, doc, "Class_Performance_Report.pdf")
     }
@@ -309,7 +503,7 @@ object PdfReportGenerator {
                 logoBitmap
             )
 
-            val colWidths = listOf(45f, 125f, 80f, 55f, 60f, 55f, 42f, 65f)
+            val colWidths = listOf(45f, 125f, 80f, 55f, 60f, 58f, 42f, 70f)
             val headers = listOf("Roll", "Student Name", "Class", "Total", "Obtained", "%", "Grade", "Status")
             y = drawTableHeaderRow(canvas, MARGIN, y, colWidths, headers, 24f)
 
@@ -317,230 +511,514 @@ object PdfReportGenerator {
             pageRows.forEachIndexed { idx, s ->
                 val bg = if (idx % 2 == 1) Color.parseColor("#F8FAFC") else Color.WHITE
                 val status = when {
-                    s.status == ResultStatus.INCOMPLETE -> "Incomplete"
+                    s.status == ResultStatus.INCOMPLETE -> "Pending"
                     s.passed -> "Pass (${ResultCalculator.formatOrdinal(s.position)})"
                     else -> "Fail"
                 }
                 val cells = listOf(
-                    s.student.rollNumber,
+                    s.student.rollNumber.ifBlank { "-" },
                     s.student.name.take(20),
                     "${s.className}-${s.sectionName}",
                     ResultCalculator.formatMarks(s.totalMaxMarks),
                     ResultCalculator.formatMarks(s.totalObtainedMarks),
-                    String.format(java.util.Locale.US, "%.1f%%", s.overallPercentage),
+                    String.format(Locale.US, "%.1f%%", s.overallPercentage),
                     s.overallGrade,
                     status
                 )
                 y = drawTableDataRow(canvas, MARGIN, y, colWidths, cells, 22f, bg, cellPaint)
             }
 
-            drawPageFooter(canvas, pageIdx + 1, totalPages)
+            drawPageFooter(canvas, campusName, pageIdx + 1, totalPages)
             doc.finishPage(page)
         }
         return savePdfToExports(context, doc, "Student_Result_Summaries.pdf")
     }
 
-    // --- INDIVIDUAL A4 RESULT CARD RENDERER ---
+    // --- INDIVIDUAL A4 PROGRESS REPORT RENDERER ---
 
     private fun drawResultCardPage(
         canvas: Canvas,
         summary: StudentResultSummary,
         schoolName: String,
         campusName: String,
+        address: String,
+        contact: String,
         logoBitmap: Bitmap?,
         pageNumber: Int,
         totalPages: Int
     ) {
-        // Outer formal double border
-        val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        val contentLeft = MARGIN
+        val contentRight = A4_WIDTH - MARGIN
+        val contentW = contentRight - contentLeft // 535f
+        val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = borderColor
+            style = Paint.Style.STROKE
+            strokeWidth = 0.8f
+        }
+
+        // Subtle outer border
+        val outerBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = navyColor
             style = Paint.Style.STROKE
-            strokeWidth = 2.5f
+            strokeWidth = 1.5f
         }
-        canvas.drawRect(20f, 20f, A4_WIDTH - 20f, A4_HEIGHT - 20f, borderPaint)
-        borderPaint.strokeWidth = 0.8f
-        borderPaint.color = goldColor
-        canvas.drawRect(25f, 25f, A4_WIDTH - 25f, A4_HEIGHT - 25f, borderPaint)
+        canvas.drawRect(18f, 18f, A4_WIDTH - 18f, A4_HEIGHT - 18f, outerBorder)
 
-        // Header Banner
-        var y = 40f
+        // Top Left Crests + "Progress Report" Top Banner
+        var y = 26f
         if (logoBitmap != null) {
-            val logoRect = RectF(MARGIN + 6f, y, MARGIN + 64f, y + 58f)
-            canvas.drawBitmap(logoBitmap, null, logoRect, null)
+            canvas.drawBitmap(logoBitmap, null, RectF(contentLeft, y, contentLeft + 46f, y + 46f), null)
+        }
+        // Student photo top right if available
+        val stuBmp = decodeBase64Bitmap(summary.student.photoBase64)
+        if (stuBmp != null) {
+            val photoRect = RectF(contentRight - 46f, y, contentRight, y + 46f)
+            canvas.drawBitmap(stuBmp, null, photoRect, null)
+            canvas.drawRect(photoRect, strokePaint)
         }
 
-        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = navyColor
-            textSize = 20f
+        // Pink/Crimson Progress Report Ribbon Header (matches physical Progress Report)
+        val ribbonLeft = contentLeft + 125f
+        val ribbonRight = contentRight - if (stuBmp != null) 54f else 0f
+        val ribbonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ribbonRoseColor }
+        canvas.drawRoundRect(RectF(ribbonLeft, y + 2f, ribbonRight, y + 32f), 4f, 4f, ribbonPaint)
+        val ribbonText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textSize = 15f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText("Progress Report", (ribbonLeft + ribbonRight) / 2f, y + 22f, ribbonText)
+
+        y += 50f
+
+        // Centered School Name, Exam Name, Campus Name
+        val schoolPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = darkText
+            textSize = 13f
             typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
         }
-        val subtitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = blueColor
-            textSize = 12f
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            textAlign = Paint.Align.CENTER
-        }
-        canvas.drawText(schoolName.uppercase(), A4_WIDTH / 2f, y + 22f, titlePaint)
-        canvas.drawText(campusName.uppercase(), A4_WIDTH / 2f, y + 40f, subtitlePaint)
-
-        // Student Photo on top right if present
-        decodeBase64Bitmap(summary.student.photoBase64)?.let { stuBmp ->
-            val photoRect = RectF(A4_WIDTH - MARGIN - 58f, y, A4_WIDTH - MARGIN - 4f, y + 60f)
-            canvas.drawBitmap(stuBmp, null, photoRect, null)
-            val frame = Paint().apply { style = Paint.Style.STROKE; color = borderColor; strokeWidth = 1f }
-            canvas.drawRect(photoRect, frame)
-        }
-
-        y += 68f
-        // RESULT CARD Ribbon
-        val ribbonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = navyColor }
-        val ribbonRect = RectF(A4_WIDTH / 2f - 105f, y, A4_WIDTH / 2f + 105f, y + 24f)
-        canvas.drawRoundRect(ribbonRect, 6f, 6f, ribbonPaint)
-        val ribbonTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
-            textSize = 12f
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            textAlign = Paint.Align.CENTER
-        }
-        canvas.drawText("RESULT CARD", A4_WIDTH / 2f, y + 16.5f, ribbonTextPaint)
-
-        y += 38f
-
-        // Student Info Box
-        val infoBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = lightBlueBg }
-        val infoRect = RectF(MARGIN, y, A4_WIDTH - MARGIN, y + 88f)
-        canvas.drawRoundRect(infoRect, 8f, 8f, infoBgPaint)
-        val infoStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            color = borderColor
-            strokeWidth = 1f
-        }
-        canvas.drawRoundRect(infoRect, 8f, 8f, infoStroke)
-
-        val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = mutedText
-            textSize = 9.5f
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-        }
-        val valPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        val examTitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = darkText
+            textSize = 11.5f
+            typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+        }
+        val campusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = navyColor
             textSize = 10.5f
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+            typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
         }
-
-        val leftX = MARGIN + 12f
-        val rightX = A4_WIDTH / 2f + 12f
-        canvas.drawText("Student Name:", leftX, y + 22f, labelPaint)
-        canvas.drawText(summary.student.name, leftX + 86f, y + 22f, valPaint)
-        canvas.drawText("Father's Name:", leftX, y + 42f, labelPaint)
-        canvas.drawText(summary.student.fatherName, leftX + 86f, y + 42f, valPaint)
-        canvas.drawText("Roll Number:", leftX, y + 62f, labelPaint)
-        canvas.drawText(summary.student.rollNumber, leftX + 86f, y + 62f, valPaint)
-        canvas.drawText("Admission No:", leftX, y + 80f, labelPaint)
-        canvas.drawText(summary.student.admissionNumber, leftX + 86f, y + 80f, valPaint)
-
-        canvas.drawText("Academic Session:", rightX, y + 22f, labelPaint)
-        canvas.drawText(summary.sessionName, rightX + 98f, y + 22f, valPaint)
-        canvas.drawText("Examination:", rightX, y + 42f, labelPaint)
-        canvas.drawText(summary.examName, rightX + 98f, y + 42f, valPaint)
-        canvas.drawText("Class & Section:", rightX, y + 62f, labelPaint)
-        canvas.drawText("${summary.className} - ${summary.sectionName}", rightX + 98f, y + 62f, valPaint)
-        canvas.drawText("Result Status:", rightX, y + 80f, labelPaint)
-        val statusTextPaint = Paint(valPaint).apply {
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            color = when {
-                summary.status == ResultStatus.INCOMPLETE -> goldColor
-                summary.passed -> passGreen
-                else -> failRed
+        canvas.drawText(schoolName.uppercase(), A4_WIDTH / 2f, y, schoolPaint)
+        y += 14f
+        canvas.drawText(summary.examName.uppercase(), A4_WIDTH / 2f, y, examTitlePaint)
+        y += 13f
+        canvas.drawText(campusName.uppercase(), A4_WIDTH / 2f, y, campusPaint)
+        if (address.isNotBlank() || contact.isNotBlank()) {
+            val metaStr = listOfNotNull(
+                address.takeIf { it.isNotBlank() },
+                contact.takeIf { it.isNotBlank() }?.let { "Ph: $it" }
+            ).joinToString(" | ")
+            val metaP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = mutedText
+                textSize = 8f
+                textAlign = Paint.Align.CENTER
             }
+            y += 11f
+            canvas.drawText(metaStr, A4_WIDTH / 2f, y, metaP)
         }
-        val statusLabel = when {
-            summary.status == ResultStatus.INCOMPLETE -> "INCOMPLETE"
-            summary.passed -> "PASS"
-            else -> "FAIL"
+        y += 8f
+
+        // Particulars Grid (Clean bordered table)
+        val hasFather = summary.student.fatherName.isNotBlank() && summary.student.fatherName != "-"
+        val hasRoll = summary.student.rollNumber.isNotBlank()
+        val hasAdm = summary.student.admissionNumber.isNotBlank()
+
+        val labelBg = Paint().apply { color = Color.parseColor("#E5E7EB") }
+        val whiteBg = Paint().apply { color = Color.WHITE }
+        val gridLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = darkText
+            textSize = 8.5f
+            typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
         }
-        canvas.drawText(statusLabel, rightX + 98f, y + 80f, statusTextPaint)
+        val gridValPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = darkText
+            textSize = 8.5f
+            typeface = Typeface.create(Typeface.SERIF, Typeface.NORMAL)
+        }
 
-        y += 104f
+        val pRowH = 18f
+        val lw1 = 82f
+        val vw1 = 185f
+        val lw2 = 82f
+        val vw2 = contentW - lw1 - vw1 - lw2
 
-        // Marks Table
-        val colWidths = listOf(185f, 85f, 95f, 85f, 77f) // total = 527 = 595 - 68
-        val headers = listOf("Subject", "Total Marks", "Obtained Marks", "Percentage", "Grade")
-        y = drawTableHeaderRow(canvas, MARGIN, y, colWidths, headers, 26f)
+        fun drawParticularRow(l1: String, v1: String, l2: String, v2: String) {
+            val c = listOf(lw1 to l1, vw1 to v1, lw2 to l2, vw2 to v2)
+            var rx = contentLeft
+            c.forEachIndexed { idx, (w, txt) ->
+                val rect = RectF(rx, y, rx + w, y + pRowH)
+                canvas.drawRect(rect, if (idx % 2 == 0) labelBg else whiteBg)
+                canvas.drawRect(rect, strokePaint)
+                val p = if (idx % 2 == 0) gridLabelPaint else gridValPaint
+                if (txt.isNotBlank()) {
+                    canvas.drawText(fitText(txt, w - 6f, p), rx + 4f, y + 12.5f, p)
+                }
+                rx += w
+            }
+            y += pRowH
+        }
 
-        val cellPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = darkText; textSize = 10f }
+        drawParticularRow(
+            "Student Name", summary.student.name,
+            if (hasFather) "Father's Name" else "Position",
+            if (hasFather) summary.student.fatherName else ResultCalculator.formatOrdinal(summary.position)
+        )
+        drawParticularRow(
+            "Class - Section", "${summary.className} - ${summary.sectionName}",
+            "Session", summary.sessionName
+        )
+        if (hasRoll || hasAdm) {
+            drawParticularRow(
+                if (hasRoll) "Roll Number" else "", if (hasRoll) summary.student.rollNumber else "",
+                if (hasAdm) "Admission No" else "", if (hasAdm) summary.student.admissionNumber else ""
+            )
+        }
+
+        y += 8f
+
+        // Unified Marks Table
+        val components = summary.examComponents
+        val subjColW = if (components.isNotEmpty()) 112f else 170f
+        val totColW = 54f
+        val highColW = 54f
+        val pctColW = 46f
+        val gradeColW = 36f
+        val compAreaW = (contentW - subjColW - totColW - highColW - pctColW - gradeColW).coerceAtLeast(0f)
+        val singleCompW = if (components.isNotEmpty()) compAreaW / components.size else 0f
+
+        val marksColWidths = buildList {
+            add(subjColW)
+            repeat(components.size) { add(singleCompW) }
+            add(totColW); add(highColW); add(pctColW); add(gradeColW)
+        }
+        val marksHeaders = buildList {
+            add("Subjects")
+            components.forEach { add("${it.name}\n(${ResultCalculator.formatMarks(it.maxMarks)})") }
+            add("Total Marks\nObtained")
+            add("Highest Marks\nin Class")
+            add("Percentage")
+            add("Grade")
+        }
+
+        val mhH = 26f
+        val mhBg = Paint().apply { color = lightGrayHeaderBg }
+        val mhPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = darkText
+            textSize = if (components.size > 3) 7f else 7.8f
+            typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+        }
+        var mx = contentLeft
+        marksHeaders.forEachIndexed { idx, h ->
+            val w = marksColWidths[idx]
+            val rect = RectF(mx, y, mx + w, y + mhH)
+            canvas.drawRect(rect, mhBg)
+            canvas.drawRect(rect, strokePaint)
+            val lines = h.split("\n")
+            if (lines.size == 1) {
+                canvas.drawText(fitText(lines[0], w - 4f, mhPaint), mx + w / 2f, y + 16f, mhPaint)
+            } else {
+                canvas.drawText(fitText(lines[0], w - 3f, mhPaint), mx + w / 2f, y + 10.5f, mhPaint)
+                canvas.drawText(fitText(lines[1], w - 3f, mhPaint), mx + w / 2f, y + 21f, mhPaint)
+            }
+            mx += w
+        }
+        y += mhH
+
+        val maxSubjectRows = summary.subjectResults.size.coerceAtLeast(1)
+        val subjRowH = if (maxSubjectRows > 9) 15f else 17f
+        val mCellPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = darkText
+            textSize = if (maxSubjectRows > 9) 7.5f else 8.3f
+            typeface = Typeface.create(Typeface.SERIF, Typeface.NORMAL)
+        }
+
         summary.subjectResults.forEachIndexed { idx, sr ->
             val bg = if (idx % 2 == 1) Color.parseColor("#F8FAFC") else Color.WHITE
-            val cells = listOf(
-                sr.subject.name + if (sr.subject.compulsory) "" else " (Elec.)",
-                ResultCalculator.formatMarks(sr.subject.maxMarks),
-                sr.obtainedMarks?.let { ResultCalculator.formatMarks(it) } ?: "Pending",
-                sr.percentage?.let { ResultCalculator.formatPercentage(it) } ?: "-",
-                sr.grade
-            )
-            y = drawTableDataRow(canvas, MARGIN, y, colWidths, cells, 25f, bg, cellPaint)
+            val bgP = Paint().apply { color = bg }
+            val rowCells = buildList {
+                add(sr.subject.name + if (sr.passed == false && sr.subject.compulsory) " *" else "")
+                components.forEach { comp ->
+                    val compVal = sr.markEntry?.componentMarks?.get(comp.id)
+                    add(compVal?.let { ResultCalculator.formatMarks(it) } ?: "-")
+                }
+                add(sr.obtainedMarks?.let { ResultCalculator.formatMarks(it) } ?: "-")
+                add(sr.highestMarksInClass?.let { ResultCalculator.formatMarks(it) } ?: "-")
+                add(sr.percentage?.let { String.format(Locale.US, "%.1f", it) } ?: "-")
+                add(sr.grade)
+            }
+            mx = contentLeft
+            rowCells.forEachIndexed { cIdx, v ->
+                val w = marksColWidths[cIdx]
+                val rect = RectF(mx, y, mx + w, y + subjRowH)
+                canvas.drawRect(rect, bgP)
+                canvas.drawRect(rect, strokePaint)
+                mCellPaint.textAlign = if (cIdx == 0) Paint.Align.LEFT else Paint.Align.CENTER
+                mCellPaint.color = if (cIdx == rowCells.lastIndex && sr.passed == false) failRed else darkText
+                val tx = if (cIdx == 0) mx + 4f else mx + w / 2f
+                canvas.drawText(fitText(v, w - 4f, mCellPaint), tx, y + subjRowH / 2f + 3f, mCellPaint)
+                mx += w
+            }
+            y += subjRowH
         }
 
-        // Totals Row
-        val totalPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = navyColor
-            textSize = 10f
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+        // GRAND TOTAL row
+        val gtH = 19f
+        val gtPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = darkText
+            textSize = 8.5f
+            typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
         }
-        val totalCells = listOf(
-            "GRAND TOTAL",
-            ResultCalculator.formatMarks(summary.totalMaxMarks),
-            ResultCalculator.formatMarks(summary.totalObtainedMarks),
-            ResultCalculator.formatPercentage(summary.overallPercentage),
-            summary.overallGrade
+        val gtCells = buildList {
+            add("GRAND TOTAL (${ResultCalculator.formatMarks(summary.totalMaxMarks)})")
+            repeat(components.size) { add("") }
+            add(ResultCalculator.formatMarks(summary.totalObtainedMarks))
+            add("")
+            add(String.format(Locale.US, "%.1f", summary.overallPercentage))
+            add(summary.overallGrade)
+        }
+        mx = contentLeft
+        // Merge GRAND TOTAL label across Subject + component cols cleanly
+        val mergedLabelW = subjColW + components.size * singleCompW
+        val gtLabelRect = RectF(mx, y, mx + mergedLabelW, y + gtH)
+        canvas.drawRect(gtLabelRect, mhBg)
+        canvas.drawRect(gtLabelRect, strokePaint)
+        gtPaint.textAlign = Paint.Align.CENTER
+        canvas.drawText(gtCells[0], mx + mergedLabelW / 2f, y + 13f, gtPaint)
+        mx += mergedLabelW
+        val tailStart = 1 + components.size
+        for (cIdx in tailStart until gtCells.size) {
+            val w = marksColWidths[cIdx]
+            val rect = RectF(mx, y, mx + w, y + gtH)
+            canvas.drawRect(rect, mhBg)
+            canvas.drawRect(rect, strokePaint)
+            canvas.drawText(gtCells[cIdx], mx + w / 2f, y + 13f, gtPaint)
+            mx += w
+        }
+        y += gtH + 7f
+
+        // Teacher's Remarks Box
+        val remHeadH = 15f
+        val remBodyH = 20f
+        canvas.drawRect(RectF(contentLeft, y, contentRight, y + remHeadH), mhBg)
+        canvas.drawRect(RectF(contentLeft, y, contentRight, y + remHeadH), strokePaint)
+        gridLabelPaint.textAlign = Paint.Align.LEFT
+        canvas.drawText("Teacher's Remarks", contentLeft + 5f, y + 11f, gridLabelPaint)
+        y += remHeadH
+        canvas.drawRect(RectF(contentLeft, y, contentRight, y + remBodyH), whiteBg)
+        canvas.drawRect(RectF(contentLeft, y, contentRight, y + remBodyH), strokePaint)
+        canvas.drawText(fitText(summary.teacherRemarks, contentW - 10f, gridValPaint), contentLeft + 5f, y + 13f, gridValPaint)
+        y += remBodyH + 8f
+
+        // Compute remaining height for Chart, Signatures (3x17=51f), and Grading Key (44f)
+        val bottomReserved = 130f // Signatures + Grading Key + footer margin
+        val chartHeight = (A4_HEIGHT - 24f - bottomReserved - y).coerceIn(115f, 180f)
+
+        // Draw Grouped Bar Chart + Legend
+        drawProgressReportBarChart(
+            canvas = canvas,
+            summary = summary,
+            left = contentLeft,
+            top = y,
+            width = contentW,
+            height = chartHeight,
+            strokePaint = strokePaint
         )
-        y = drawTableDataRow(canvas, MARGIN, y, colWidths, totalCells, 28f, lightBlueBg, totalPaint)
+        y += chartHeight + 8f
 
-        y += 18f
+        // 3-Row Signature | Dated Grid
+        val sigRowH = 17f
+        val sigColW = 150f
+        val sigLineW = 140f
+        val datedLabelW = 55f
+        val datedValW = contentW - sigColW - sigLineW - datedLabelW
+        val sigTitles = listOf(
+            "Class Teacher's Signature",
+            "Principal's Signature",
+            "Parent/Guardian's Signature"
+        )
+        sigTitles.forEach { title ->
+            var sx = contentLeft
+            val r1 = RectF(sx, y, sx + sigColW, y + sigRowH)
+            canvas.drawRect(r1, mhBg); canvas.drawRect(r1, strokePaint)
+            canvas.drawText(title, sx + 5f, y + 11.5f, gridLabelPaint)
+            sx += sigColW
 
-        // Bottom Summary Box
-        val sumRect = RectF(MARGIN, y, A4_WIDTH - MARGIN, y + 92f)
-        canvas.drawRoundRect(sumRect, 8f, 8f, infoBgPaint)
-        canvas.drawRoundRect(sumRect, 8f, 8f, infoStroke)
+            val r2 = RectF(sx, y, sx + sigLineW, y + sigRowH)
+            canvas.drawRect(r2, whiteBg); canvas.drawRect(r2, strokePaint)
+            sx += sigLineW
 
-        canvas.drawText("Total Marks:", leftX, y + 22f, labelPaint)
-        canvas.drawText(ResultCalculator.formatMarks(summary.totalMaxMarks), leftX + 86f, y + 22f, valPaint)
-        canvas.drawText("Obtained Marks:", leftX, y + 42f, labelPaint)
-        canvas.drawText(ResultCalculator.formatMarks(summary.totalObtainedMarks), leftX + 86f, y + 42f, valPaint)
-        canvas.drawText("Overall %:", leftX, y + 62f, labelPaint)
-        canvas.drawText(ResultCalculator.formatPercentage(summary.overallPercentage), leftX + 86f, y + 62f, valPaint)
+            val r3 = RectF(sx, y, sx + datedLabelW, y + sigRowH)
+            canvas.drawRect(r3, mhBg); canvas.drawRect(r3, strokePaint)
+            canvas.drawText("Dated", sx + 6f, y + 11.5f, gridLabelPaint)
+            sx += datedLabelW
 
-        canvas.drawText("Overall Grade:", rightX, y + 22f, labelPaint)
-        canvas.drawText("${summary.overallGrade} (${summary.gradeRemarks})", rightX + 92f, y + 22f, valPaint)
-        canvas.drawText("Class Position:", rightX, y + 42f, labelPaint)
-        canvas.drawText(ResultCalculator.formatOrdinal(summary.position), rightX + 92f, y + 42f, valPaint)
-        canvas.drawText("Result Status:", rightX, y + 62f, labelPaint)
-        canvas.drawText(statusLabel, rightX + 92f, y + 62f, statusTextPaint)
+            val r4 = RectF(sx, y, sx + datedValW, y + sigRowH)
+            canvas.drawRect(r4, whiteBg); canvas.drawRect(r4, strokePaint)
+            y += sigRowH
+        }
+        y += 8f
 
-        canvas.drawText("Teacher's Remarks:", leftX, y + 82f, labelPaint)
-        canvas.drawText(summary.teacherRemarks.take(72), leftX + 104f, y + 82f, valPaint)
+        // Bottom GRADING KEY Table
+        val rules = summary.gradingRulesUsed.ifEmpty { ResultCalculator.defaultGradingTemplates() }
+            .sortedByDescending { it.minPercentage }
+        val gkHeaderH = 15f
+        val gkBodyH = 26f
+        canvas.drawRect(RectF(contentLeft, y, contentRight, y + gkHeaderH), mhBg)
+        canvas.drawRect(RectF(contentLeft, y, contentRight, y + gkHeaderH), strokePaint)
+        val gkTitleP = Paint(gridLabelPaint).apply { textAlign = Paint.Align.CENTER; textSize = 8.5f }
+        canvas.drawText("GRADING KEY", contentLeft + contentW / 2f, y + 11f, gkTitleP)
+        y += gkHeaderH
 
-        // Signature Section near bottom
-        val sigY = A4_HEIGHT - 95f
-        val linePaint = Paint().apply { color = darkText; strokeWidth = 1f }
-        val sigLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        if (rules.isNotEmpty()) {
+            val cellW = contentW / rules.size
+            val gkGradeP = Paint(gridLabelPaint).apply { textAlign = Paint.Align.CENTER; textSize = 7.5f }
+            val gkRangeP = Paint(gridValPaint).apply { textAlign = Paint.Align.CENTER; textSize = 7.2f }
+            rules.forEachIndexed { idx, rule ->
+                val cx = contentLeft + idx * cellW
+                val r = RectF(cx, y, cx + cellW, y + gkBodyH)
+                canvas.drawRect(r, whiteBg)
+                canvas.drawRect(r, strokePaint)
+                canvas.drawText("Grade ${rule.grade}", cx + cellW / 2f, y + 10.5f, gkGradeP)
+                canvas.drawText(formatBandText(rule.minPercentage, rule.maxPercentage), cx + cellW / 2f, y + 21f, gkRangeP)
+            }
+        }
+
+        drawPageFooter(canvas, campusName, pageNumber, totalPages)
+    }
+
+    private fun drawProgressReportBarChart(
+        canvas: Canvas,
+        summary: StudentResultSummary,
+        left: Float,
+        top: Float,
+        width: Float,
+        height: Float,
+        strokePaint: Paint
+    ) {
+        // Outer chart border
+        canvas.drawRect(RectF(left, top, left + width, top + height), Paint().apply { color = Color.WHITE })
+        canvas.drawRect(RectF(left, top, left + width, top + height), strokePaint)
+
+        val legendH = 20f
+        val xLabelH = 18f
+        val topPad = 10f
+        val plotLeft = left + 30f
+        val plotRight = left + width - 10f
+        val plotTop = top + topPad
+        val plotBottom = top + height - legendH - xLabelH
+        val plotW = (plotRight - plotLeft).coerceAtLeast(40f)
+        val plotH = (plotBottom - plotTop).coerceAtLeast(30f)
+
+        val components = summary.examComponents
+        // Compute Y max dynamically cleanly (e.g., max of subject maxMarks, obtained, highest)
+        val rawMax = summary.subjectResults.maxOfOrNull { sr ->
+            maxOf(sr.subject.maxMarks, sr.obtainedMarks ?: 0.0, sr.highestMarksInClass ?: 0.0)
+        }?.coerceAtLeast(10.0) ?: 100.0
+        val ySteps = 5
+        val yMax = (ceil(rawMax / 10.0) * 10.0).coerceAtLeast(10.0)
+
+        val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = lightBorderColor; strokeWidth = 0.6f }
+        val axisPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = darkText; strokeWidth = 0.9f }
+        val axisLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = mutedText
-            textSize = 9.5f
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            textAlign = Paint.Align.CENTER
-        }
-        val sigPositions = listOf(
-            Pair(MARGIN + 75f, "Class Teacher"),
-            Pair(A4_WIDTH / 2f, "Examination In-charge"),
-            Pair(A4_WIDTH - MARGIN - 75f, "Principal")
-        )
-        sigPositions.forEach { (cx, title) ->
-            canvas.drawLine(cx - 60f, sigY, cx + 60f, sigY, linePaint)
-            canvas.drawText(title, cx, sigY + 15f, sigLabelPaint)
+            textSize = 7f
+            textAlign = Paint.Align.RIGHT
         }
 
-        drawPageFooter(canvas, pageNumber, totalPages)
+        for (step in 0..ySteps) {
+            val frac = step.toFloat() / ySteps.toFloat()
+            val gy = plotBottom - frac * plotH
+            canvas.drawLine(plotLeft, gy, plotRight, gy, if (step == 0) axisPaint else gridPaint)
+            val tickVal = (yMax * frac).toInt()
+            canvas.drawText(tickVal.toString(), plotLeft - 4f, gy + 2.5f, axisLabelPaint)
+        }
+        canvas.drawLine(plotLeft, plotTop, plotLeft, plotBottom, axisPaint)
+
+        val subs = summary.subjectResults
+        if (subs.isNotEmpty()) {
+            val seriesPerSubject = (if (components.isNotEmpty()) components.size + 2 else 2)
+            val clusterSlotW = plotW / subs.size
+            val clusterInnerW = clusterSlotW * 0.78f
+            val barW = (clusterInnerW / seriesPerSubject).coerceIn(2.5f, 12f)
+            val barGap = 1.2f
+            val actualClusterW = seriesPerSubject * barW + (seriesPerSubject - 1) * barGap
+
+            val barPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+            val subLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = darkText
+                textSize = if (subs.size > 7) 6.5f else 7.2f
+                textAlign = Paint.Align.CENTER
+            }
+
+            subs.forEachIndexed { idx, sr ->
+                val cx = plotLeft + idx * clusterSlotW + clusterSlotW / 2f
+                var bx = cx - actualClusterW / 2f
+
+                val barValues = buildList {
+                    components.forEachIndexed { cIdx, comp ->
+                        add((sr.markEntry?.componentMarks?.get(comp.id) ?: 0.0) to chartPalette[cIdx % 4])
+                    }
+                    add((sr.obtainedMarks ?: 0.0) to chartPalette[4])
+                    add((sr.highestMarksInClass ?: 0.0) to chartPalette[5])
+                }
+
+                barValues.forEach { (value, color) ->
+                    val clampedH = ((value / yMax).coerceIn(0.0, 1.0) * plotH).toFloat()
+                    if (clampedH > 0.5f) {
+                        barPaint.color = color
+                        canvas.drawRect(RectF(bx, plotBottom - clampedH, bx + barW, plotBottom), barPaint)
+                    }
+                    bx += barW + barGap
+                }
+
+                canvas.drawText(
+                    fitText(sr.subject.name, clusterSlotW - 3f, subLabelPaint),
+                    cx,
+                    plotBottom + 11f,
+                    subLabelPaint
+                )
+            }
+        }
+
+        // Chart Legend row inside bottom of chart container
+        val legendItems = buildList {
+            components.forEachIndexed { idx, comp -> add(comp.name to chartPalette[idx % 4]) }
+            add("Obtained Marks" to chartPalette[4])
+            add("Highest Marks in Class" to chartPalette[5])
+        }
+        val legendY = top + height - 7f
+        val legPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = darkText
+            textSize = if (legendItems.size > 4) 6.3f else 7.2f
+        }
+        val swatchPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val itemSlotW = (width - 20f) / legendItems.size.coerceAtLeast(1)
+        legendItems.forEachIndexed { idx, (lbl, col) ->
+            val lx = left + 12f + idx * itemSlotW
+            swatchPaint.color = col
+            canvas.drawRect(RectF(lx, legendY - 7f, lx + 10f, legendY + 1f), swatchPaint)
+            canvas.drawText(fitText(lbl, itemSlotW - 14f, legPaint), lx + 13f, legendY, legPaint)
+        }
+    }
+
+    private fun formatBandText(minPct: Double, maxPct: Double): String {
+        val minInt = minPct.toInt()
+        val maxInt = if (maxPct >= 99.9) 100 else ceil(maxPct).toInt()
+        return "$minInt% - $maxInt%"
     }
 
     // --- DRAWING HELPERS ---
@@ -610,7 +1088,7 @@ object PdfReportGenerator {
             val rect = RectF(x, startY, x + w, startY + rowHeight)
             canvas.drawRect(rect, bgPaint)
             canvas.drawRect(rect, strokePaint)
-            canvas.drawText(h, x + 4f, startY + rowHeight / 2f + 3f, textPaint)
+            canvas.drawText(fitText(h, w - 6f, textPaint), x + 4f, startY + rowHeight / 2f + 3f, textPaint)
             x += w
         }
         return startY + rowHeight
@@ -627,31 +1105,40 @@ object PdfReportGenerator {
         textPaint: Paint
     ): Float {
         val bgPaint = Paint().apply { color = bgColor }
-        val strokePaint = Paint().apply { color = borderColor; style = Paint.Style.STROKE; strokeWidth = 0.7f }
+        val strokePaint = Paint().apply { color = lightBorderColor; style = Paint.Style.STROKE; strokeWidth = 0.7f }
         var x = startX
         cells.forEachIndexed { idx, value ->
             val w = colWidths[idx]
             val rect = RectF(x, startY, x + w, startY + rowHeight)
             canvas.drawRect(rect, bgPaint)
             canvas.drawRect(rect, strokePaint)
-            canvas.drawText(value, x + 4f, startY + rowHeight / 2f + 3.5f, textPaint)
+            canvas.drawText(fitText(value, w - 6f, textPaint), x + 4f, startY + rowHeight / 2f + 3.5f, textPaint)
             x += w
         }
         return startY + rowHeight
     }
 
-    private fun drawPageFooter(canvas: Canvas, pageNumber: Int, totalPages: Int) {
+    private fun drawPageFooter(canvas: Canvas, campusName: String, pageNumber: Int, totalPages: Int) {
         val footerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = mutedText
-            textSize = 8.5f
+            textSize = 8f
             textAlign = Paint.Align.CENTER
         }
         canvas.drawText(
-            "The Educators Abbottabad Main Campus — Page $pageNumber of $totalPages",
+            "$campusName — Page $pageNumber of $totalPages",
             A4_WIDTH / 2f,
-            A4_HEIGHT - 28f,
+            A4_HEIGHT - 24f,
             footerPaint
         )
+    }
+
+    private fun fitText(text: String, maxWidth: Float, paint: Paint): String {
+        if (text.isEmpty() || paint.measureText(text) <= maxWidth) return text
+        var end = text.length
+        while (end > 1 && paint.measureText(text.substring(0, end) + "..") > maxWidth) {
+            end--
+        }
+        return if (end <= 1) text.take(1) else text.substring(0, end) + ".."
     }
 
     private fun decodeLogoBitmap(context: Context, logoBase64: String?): Bitmap? {

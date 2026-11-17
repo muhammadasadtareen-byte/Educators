@@ -416,7 +416,6 @@ object StudentDocumentExtractor {
         }
 
         val candidates = mutableListOf<ExtractedStudentCandidate>()
-        var autoCounter = startingRoll.coerceAtLeast(1)
 
         for (i in startIdx until rawLines.size) {
             val line = rawLines[i]
@@ -434,23 +433,34 @@ object StudentDocumentExtractor {
                 if (rollCol >= 0) extractedRoll = cols.getOrNull(rollCol).orEmpty()
                 if (admCol >= 0) extractedAdm = cols.getOrNull(admCol).orEmpty()
             } else if (cols.size >= 2) {
-                // Heuristic table row without explicit header
+                // Heuristic table row without explicit header:
+                // If trailing columns are marks/scores/percentages/grades (like a Consolidated Sheet), skip them for Father's Name.
                 val first = cols[0]
                 if (looksLikeRollOrSerial(first)) {
                     extractedRoll = first.trimEnd('.', ')', '-')
                     extractedName = cols.getOrNull(1).orEmpty()
-                    extractedFather = cols.getOrNull(2).orEmpty()
-                    extractedAdm = cols.getOrNull(3).orEmpty()
+                    val third = cols.getOrNull(2).orEmpty()
+                    if (third.isNotBlank() && !looksLikeScoreOrGradeToken(third)) {
+                        extractedFather = third
+                        val fourth = cols.getOrNull(3).orEmpty()
+                        if (fourth.isNotBlank() && !looksLikeScoreOrGradeToken(fourth)) {
+                            extractedAdm = fourth
+                        }
+                    }
                 } else {
                     extractedName = cols[0]
-                    extractedFather = cols.getOrNull(1).orEmpty()
-                    if (cols.size >= 3 && looksLikeRollOrSerial(cols[2])) {
-                        extractedRoll = cols[2]
+                    val second = cols.getOrNull(1).orEmpty()
+                    if (second.isNotBlank() && !looksLikeScoreOrGradeToken(second)) {
+                        extractedFather = second
+                        val third = cols.getOrNull(2).orEmpty()
+                        if (third.isNotBlank() && looksLikeRollOrSerial(third) && !third.contains('.')) {
+                            extractedRoll = third
+                        }
                     }
                 }
             } else {
-                // Single-column line: check leading roll/serial and inline S/O or D/O
-                var body = line
+                // Single-column line: strip trailing Consolidated Sheet scores/percentages/grades if present
+                var body = stripTrailingScoreTail(line)
                 val leadingMatch = Regex("^([A-Za-z0-9\\-]{1,10})[.):\\-]+\\s+(.+)$").find(body)
                 if (leadingMatch != null && leadingMatch.groupValues[1].any { it.isDigit() }) {
                     extractedRoll = leadingMatch.groupValues[1].trim()
@@ -485,14 +495,13 @@ object StudentDocumentExtractor {
                 }
             }
 
+            extractedName = stripTrailingScoreTail(extractedName)
             val cleanName = cleanPersonName(extractedName)
             if (!isPlausibleStudentName(cleanName)) continue
 
-            val cleanFather = cleanPersonName(extractedFather).ifBlank { "-" }
+            val cleanFather = if (looksLikeScoreOrGradeToken(extractedFather)) "" else cleanPersonName(extractedFather)
             val cleanRoll = extractedRoll.replace(Regex("[^A-Za-z0-9\\-]"), "").take(20)
-                .ifBlank { (autoCounter++).toString() }
             val cleanAdm = extractedAdm.replace(Regex("[^A-Za-z0-9\\-]"), "").take(30)
-                .ifBlank { "ADM-$cleanRoll" }
 
             candidates.add(
                 ExtractedStudentCandidate(
@@ -526,10 +535,28 @@ object StudentDocumentExtractor {
             !cleaned.contains(' ')
     }
 
+    private fun stripTrailingScoreTail(text: String): String {
+        // Strips trailing numbers / decimal marks / percentage / grade column runs on Consolidated Sheet OCR lines
+        // e.g., "Farhan Khalid . 27.00 16.00 297.75 66.2% B+" -> "Farhan Khalid ."
+        return text
+            .replace(Regex("(?:\\s+(?:\\d+(?:\\.\\d+)?%?|\\d+\\.\\d+%?|AB|A\\+?|B\\+?|C|D|E|F)){2,}\\s*$", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\s+\\d+(?:\\.\\d+)?%?\\s*$"), "")
+            .trim()
+    }
+
+    private fun looksLikeScoreOrGradeToken(token: String): Boolean {
+        val t = token.trim()
+        if (t.isEmpty()) return true
+        return Regex("^\\d+(?:\\.\\d+)?%?$").matches(t) ||
+            Regex("^[A-F][+*]?$").matches(t) ||
+            t.equals("AB", ignoreCase = true) ||
+            t == "-"
+    }
+
     private fun cleanPersonName(raw: String): String {
         return raw
             .replace(Regex("^[•\\-*.,:;]+\\s*"), "")
-            .replace(Regex("\\s*[•\\-*,:;]+$"), "")
+            .replace(Regex("\\s*[•\\-*.,:;]+$"), "")
             .replace(Regex("\\s+"), " ")
             .trim()
     }
@@ -549,17 +576,28 @@ object StudentDocumentExtractor {
         val lower = line.trim().lowercase()
         if (lower.length < 2) return true
         if (lower.contains("@") || lower.contains("http://") || lower.contains("https://")) return true
-        if (Regex("^[\\d\\s/\\-:.,|]+$").matches(lower)) return true
+        if (lower.contains("***")) return true
+        if (Regex("^[\\d\\s/\\-:.,|%]+$").matches(lower)) return true
+
+        val containedHeaders = listOf(
+            "the educators", "consolidated sheet", "progress report",
+            "assesment task", "assessment task", "student list", "students list",
+            "attendance register", "examination", "student name", "father's name",
+            "father name", "highest marks", "grading key", "grand total",
+            "years of nation", "a project of", "eduvision", "tech vision", "printed on"
+        )
+        if (containedHeaders.any { lower.contains(it) }) return true
 
         val exactOrPrefixHeaders = listOf(
-            "the educators", "abbottabad", "campus", "student list", "students list",
-            "class:", "section:", "session:", "academic session", "examination",
-            "attendance register", "roll no", "roll number", "student name", "father name",
-            "father's name", "admission no", "sr no", "sr.", "s.no", "page ",
-            "signature", "principal", "class teacher", "total students", "date:"
+            "abbottabad", "mansehra road", "campus", "address:", "contact:",
+            "class:", "section:", "session:", "academic session",
+            "roll no", "roll number", "admission no", "sr no", "sr.", "s.no", "page ",
+            "signature", "principal", "class teacher", "total students", "date:",
+            "pak-studies", "mathematics", "computer/biology", "obt. (", "% age"
         )
         return exactOrPrefixHeaders.any { kw ->
-            lower == kw || lower.startsWith(kw) || (lower.contains("student name") && lower.contains("father"))
-        }
+            lower == kw || lower.startsWith(kw)
+        } || lower == "name" || lower == "english" || lower == "urdu" || lower == "physics" ||
+            lower == "chemistry" || lower == "islamiat" || lower == "grade" || lower == "subjects"
     }
 }
