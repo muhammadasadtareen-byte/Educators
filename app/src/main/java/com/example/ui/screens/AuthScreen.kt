@@ -23,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -31,6 +32,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -70,6 +72,17 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
+        AuthHelper.checkPendingBrowserSignIn(
+            onAuthSuccess = {
+                isAutoSigningIn = false
+                onAuthSuccess()
+            },
+            onAuthError = { msg ->
+                isAutoSigningIn = false
+                errorMessage = msg
+            },
+            scope = scope
+        )
         AuthHelper.attemptAutoSignIn(
             context = context,
             credentialManager = credentialManager,
@@ -184,6 +197,9 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
                     Spacer(Modifier.height(20.dp))
 
                     if (errorMessage != null) {
+                        val rawError = errorMessage ?: ""
+                        val isReauthError = rawError.contains("reauth", ignoreCase = true) ||
+                            rawError.contains("[16]")
                         Surface(
                             color = MaterialTheme.colorScheme.errorContainer,
                             shape = RoundedCornerShape(10.dp),
@@ -191,12 +207,54 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
                                 .fillMaxWidth()
                                 .padding(bottom = 12.dp)
                         ) {
-                            Text(
-                                text = errorMessage ?: "",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                modifier = Modifier.padding(12.dp)
-                            )
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = rawError,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                                if (isReauthError) {
+                                    Text(
+                                        text = "Google Play Services on this device could not refresh your account session. You can sign in using your browser below, or remove and re-add your Google account in Phone Settings.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        errorMessage = null
+                                        isLoading = true
+                                        AuthHelper.signInWithGoogleBrowser(
+                                            context = context,
+                                            onAuthSuccess = {
+                                                isLoading = false
+                                                onAuthSuccess()
+                                            },
+                                            onAuthError = { msg ->
+                                                isLoading = false
+                                                errorMessage = msg
+                                            },
+                                            scope = scope
+                                        )
+                                    },
+                                    enabled = !isLoading && !isAutoSigningIn,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 48.dp)
+                                        .testTag("google_browser_sign_in_button")
+                                ) {
+                                    Icon(
+                                        Icons.Default.OpenInBrowser,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Sign in via Browser (Google)")
+                                }
+                            }
                         }
                     }
 

@@ -15,6 +15,7 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
 import com.google.firebase.Firebase
 import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.auth.OAuthProvider
 import com.google.firebase.auth.auth
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
@@ -23,6 +24,23 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
 object AuthHelper {
+
+    fun checkPendingBrowserSignIn(
+        onAuthSuccess: () -> Unit,
+        onAuthError: (String) -> Unit,
+        scope: CoroutineScope
+    ) {
+        val pending = Firebase.auth.pendingAuthResult ?: return
+        scope.launch {
+            try {
+                pending.await()
+                onAuthSuccess()
+            } catch (e: Exception) {
+                Log.w("Auth", "Pending browser sign-in failed", e)
+                onAuthError(e.localizedMessage ?: "Browser sign-in failed")
+            }
+        }
+    }
 
     fun attemptAutoSignIn(
         context: Context,
@@ -105,6 +123,36 @@ object AuthHelper {
             } catch (e: Exception) {
                 Log.e("Auth", "Google Sign-In failed", e)
                 onAuthError(e.localizedMessage ?: "Sign in failed")
+            }
+        }
+    }
+
+    fun signInWithGoogleBrowser(
+        context: Context,
+        onAuthSuccess: () -> Unit,
+        onAuthError: (String) -> Unit,
+        scope: CoroutineScope
+    ) {
+        val activity = context as? Activity
+        if (activity == null) {
+            onAuthError("Unable to launch browser sign-in without an Activity context.")
+            return
+        }
+        val provider = OAuthProvider.newBuilder("google.com")
+            .addCustomParameter("prompt", "select_account")
+            .build()
+        scope.launch {
+            try {
+                val pending = Firebase.auth.pendingAuthResult
+                if (pending != null) {
+                    pending.await()
+                } else {
+                    Firebase.auth.startActivityForSignInWithProvider(activity, provider).await()
+                }
+                onAuthSuccess()
+            } catch (e: Exception) {
+                Log.e("Auth", "Browser Google Sign-In failed", e)
+                onAuthError(e.localizedMessage ?: "Browser sign-in failed")
             }
         }
     }
