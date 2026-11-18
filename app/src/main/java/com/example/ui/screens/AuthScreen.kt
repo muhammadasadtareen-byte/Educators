@@ -216,8 +216,14 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
                                     errorMessage = msg
                                 },
                                 scope = scope,
-                                onAuthCancelled = {
+                                onAuthCancelled = { detail ->
                                     isLoading = false
+                                    if (!detail.isNullOrBlank() &&
+                                        !detail.contains("cancelled by the user", ignoreCase = true) &&
+                                        !detail.contains("canceled by the user", ignoreCase = true)
+                                    ) {
+                                        errorMessage = detail
+                                    }
                                 }
                             )
                         },

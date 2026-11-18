@@ -71,7 +71,7 @@ object AuthHelper {
         onAuthSuccess: () -> Unit,
         onAuthError: (String) -> Unit,
         scope: CoroutineScope,
-        onAuthCancelled: () -> Unit = {}
+        onAuthCancelled: (String?) -> Unit = {}
     ) {
         val clientId = try {
             context.getString(R.string.default_web_client_id)
@@ -99,8 +99,9 @@ object AuthHelper {
                     onAuthError("Unexpected credential type received.")
                 }
             } catch (e: GetCredentialCancellationException) {
-                Log.w("Auth", "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
-                onAuthCancelled()
+                val detail = e.errorMessage?.toString()?.takeIf { it.isNotBlank() } ?: e.message
+                Log.w("Auth", "Google Sign-In flow cancelled or dismissed: $detail", e)
+                onAuthCancelled(detail)
             } catch (e: Exception) {
                 Log.e("Auth", "Google Sign-In failed", e)
                 onAuthError(e.localizedMessage ?: "Sign in failed")
