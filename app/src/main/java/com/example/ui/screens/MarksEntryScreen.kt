@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import com.example.data.model.ExamComponent
 import com.example.data.model.Examination
 import com.example.data.model.MarkEntry
+import com.example.data.model.StaffRole
 import com.example.data.model.Student
 import com.example.data.model.Subject
 import com.example.domain.ResultCalculator
@@ -387,7 +388,35 @@ fun MarksEntryScreen(
             )
         }
 
-        if (selectedSubject == null || studentsInSection.isEmpty()) {
+        if (snapshot.visibleClasses.isEmpty()) {
+            val sharedCampus = snapshot.accessibleCampuses.firstOrNull { it.id != snapshot.campus.id }
+            EmptyStateCard(
+                icon = Icons.Default.Edit,
+                title = if (sharedCampus != null) {
+                    "Switch to Shared School Portal"
+                } else if (snapshot.effectiveRole == StaffRole.TEACHER) {
+                    "No Classes Assigned Yet"
+                } else {
+                    "No Classes Configured"
+                },
+                description = if (sharedCampus != null) {
+                    "You are currently viewing an empty workspace. Switch to ${sharedCampus.schoolName} (${sharedCampus.campusName}) to view your assigned classes and students."
+                } else if (snapshot.effectiveRole == StaffRole.TEACHER) {
+                    "Ask your campus Admin to open Settings → Staff Accounts, tap Edit next to your name, and assign your classes."
+                } else {
+                    "Create classes and sections in Class Management first."
+                },
+                actionLabel = sharedCampus?.let { "Switch to ${it.campusName}" },
+                onAction = sharedCampus?.let { camp ->
+                    {
+                        viewModel.switchCampus(
+                            camp.id,
+                            "${camp.schoolName} (${camp.campusName})"
+                        )
+                    }
+                }
+            )
+        } else if (selectedSubject == null || studentsInSection.isEmpty()) {
             EmptyStateCard(
                 icon = Icons.Default.Edit,
                 title = if (selectedSubject == null) "No Subject Configured" else "No Students in Section",

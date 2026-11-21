@@ -441,9 +441,13 @@ private fun AppNavHost(
         composable(AppRoute.DASHBOARD) {
             DashboardScreen(
                 snapshot = snapshot,
+                currentUserId = viewModel.currentUserId,
                 onSelectSession = { viewModel.selectSession(it) },
                 onSelectExam = { viewModel.selectExam(it) },
                 onNavigate = onNavigate,
+                onSwitchCampus = { campusId, label ->
+                    viewModel.switchCampus(campusId, label)
+                },
                 onUpdateExam = { examId, sessionId, name, examType, useCustomGrading, sortOrder, components ->
                     viewModel.updateExamination(
                         campusId = snapshot.campus.id,

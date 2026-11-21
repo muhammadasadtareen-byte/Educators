@@ -20,9 +20,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
@@ -32,6 +34,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -74,6 +77,7 @@ import com.example.data.model.ExamComponent
 import com.example.data.model.ExamType
 import com.example.data.model.Examination
 import com.example.data.model.GradingRule
+import com.example.data.model.StaffMember
 import com.example.data.model.StaffRole
 import com.example.data.model.StudentEntryField
 import com.example.domain.PdfReportGenerator
@@ -128,6 +132,8 @@ fun SettingsScreen(
     var showAddExamDialog by remember { mutableStateOf(false) }
     var editingExam by remember { mutableStateOf<Examination?>(null) }
     var showAddStaffDialog by remember { mutableStateOf(false) }
+    var editingStaff by remember { mutableStateOf<StaffMember?>(null) }
+    var pendingDeleteStaff by remember { mutableStateOf<StaffMember?>(null) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -169,6 +175,67 @@ fun SettingsScreen(
                             viewModel.postMessage("User UID copied.")
                         }) {
                             Icon(Icons.Default.ContentCopy, contentDescription = "Copy UID", tint = EducatorsBlue)
+                        }
+                    }
+
+                    if (snapshot.accessibleCampuses.size > 1) {
+                        Text(
+                            text = "Switch Campus Portal:",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = EducatorsNavy
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            snapshot.accessibleCampuses.forEach { camp ->
+                                val isCurrent = camp.id == snapshot.campus.id
+                                val isPersonal = camp.ownerId == viewModel.currentUserId
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (isCurrent) EducatorsBlue.copy(alpha = 0.10f) else MaterialTheme.colorScheme.background,
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (isCurrent) EducatorsBlue else MaterialTheme.colorScheme.outline
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = camp.schoolName,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                color = EducatorsNavy
+                                            )
+                                            Text(
+                                                text = "${camp.campusName} • ${if (isPersonal) "Your Campus (Admin)" else "Shared School Portal"}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        if (isCurrent) {
+                                            StatusPill(text = "Active", isPositive = true)
+                                        } else {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    viewModel.switchCampus(
+                                                        camp.id,
+                                                        "${camp.schoolName} (${camp.campusName})"
+                                                    )
+                                                },
+                                                modifier = Modifier
+                                                    .heightIn(min = 40.dp)
+                                                    .testTag("switch_campus_${camp.id}")
+                                            ) {
+                                                Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(Modifier.width(4.dp))
+                                                Text("Switch")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -517,13 +584,25 @@ fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("Staff Accounts & Permissions", style = MaterialTheme.typography.titleMedium, color = EducatorsNavy)
-                            TextButton(onClick = { showAddStaffDialog = true }) {
+                            TextButton(
+                                onClick = {
+                                    editingStaff = null
+                                    showAddStaffDialog = true
+                                },
+                                modifier = Modifier.testTag("add_staff_btn")
+                            ) {
                                 Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(4.dp))
                                 Text("Add Staff")
                             }
                         }
+                        Text(
+                            text = "Tap the edit icon next to any teacher to assign or update their classes.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         snapshot.staff.forEach { member ->
+                            val isOwnerRow = member.userUid == snapshot.campus.ownerId || member.id == snapshot.campus.ownerId
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
                                 color = MaterialTheme.colorScheme.background,
@@ -541,17 +620,44 @@ fun SettingsScreen(
                                         if (member.parsedRole() == StaffRole.TEACHER) {
                                             val clsNames = member.assignedClassIds.mapNotNull { snapshot.classesById[it]?.name }
                                             Text(
-                                                "Assigned: ${clsNames.ifEmpty { listOf("None") }.joinToString(", ")}",
+                                                "Assigned: ${clsNames.ifEmpty { listOf("None — tap Edit to assign") }.joinToString(", ")}",
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = EducatorsBlue
+                                                color = if (clsNames.isEmpty()) CrimsonFail else EducatorsBlue
                                             )
                                         }
                                     }
-                                    StatusPill(
-                                        text = member.role,
-                                        isPositive = member.parsedRole() == StaffRole.ADMIN,
-                                        isWarning = member.parsedRole() == StaffRole.TEACHER
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        StatusPill(
+                                            text = member.role,
+                                            isPositive = member.parsedRole() == StaffRole.ADMIN,
+                                            isWarning = member.parsedRole() == StaffRole.TEACHER
+                                        )
+                                        if (!isOwnerRow) {
+                                            IconButton(
+                                                onClick = {
+                                                    editingStaff = member
+                                                    showAddStaffDialog = true
+                                                },
+                                                modifier = Modifier.testTag("edit_staff_${member.userUid}")
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Edit,
+                                                    contentDescription = "Edit ${member.displayName}",
+                                                    tint = EducatorsBlue
+                                                )
+                                            }
+                                            IconButton(
+                                                onClick = { pendingDeleteStaff = member },
+                                                modifier = Modifier.testTag("delete_staff_${member.userUid}")
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Delete,
+                                                    contentDescription = "Remove ${member.displayName}",
+                                                    tint = CrimsonFail
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -691,26 +797,83 @@ fun SettingsScreen(
     }
 
     if (showAddStaffDialog) {
-        var uid by remember { mutableStateOf("") }
-        var email by remember { mutableStateOf("") }
-        var name by remember { mutableStateOf("") }
-        var role by remember { mutableStateOf(StaffRole.TEACHER) }
-        var selectedClasses by remember { mutableStateOf(setOf<String>()) }
+        val targetStaff = editingStaff
+        var uid by remember(targetStaff?.userUid) { mutableStateOf(targetStaff?.userUid ?: "") }
+        var email by remember(targetStaff?.email) { mutableStateOf(targetStaff?.email ?: "") }
+        var name by remember(targetStaff?.displayName) { mutableStateOf(targetStaff?.displayName ?: "") }
+        var role by remember(targetStaff?.role) { mutableStateOf(targetStaff?.parsedRole() ?: StaffRole.TEACHER) }
+        var selectedClasses by remember(targetStaff?.userUid, targetStaff?.assignedClassIds) {
+            mutableStateOf((targetStaff?.assignedClassIds ?: emptyList()).toSet())
+        }
+        val canSave = uid.isNotBlank() && name.isNotBlank() && email.isNotBlank() &&
+            (role == StaffRole.ADMIN || selectedClasses.isNotEmpty() || snapshot.classes.isEmpty())
+
         AlertDialog(
-            onDismissRequest = { showAddStaffDialog = false },
-            title = { Text("Add / Update Staff Account") },
+            onDismissRequest = {
+                showAddStaffDialog = false
+                editingStaff = null
+            },
+            title = {
+                Text(if (targetStaff == null) "Add Staff Account" else "Edit Staff & Assigned Classes")
+            },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = uid, onValueChange = { uid = it }, label = { Text("User Google UID *") }, singleLine = true)
-                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Full Name *") }, singleLine = true)
-                    OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Email Address *") }, singleLine = true)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = uid,
+                        onValueChange = { if (targetStaff == null) uid = it },
+                        readOnly = targetStaff != null,
+                        label = { Text("User Google UID *") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("Full Name *") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = email,
+                        onValueChange = { email = it },
+                        label = { Text("Email Address *") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         StaffRole.entries.forEach { r ->
                             FilterChip(selected = role == r, onClick = { role = r }, label = { Text(r.name) })
                         }
                     }
                     if (role == StaffRole.TEACHER) {
-                        Text("Assign Classes:", style = MaterialTheme.typography.labelMedium)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Assign Classes (${selectedClasses.size} selected):", style = MaterialTheme.typography.labelMedium)
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                TextButton(onClick = { selectedClasses = snapshot.classes.map { it.id }.toSet() }) {
+                                    Text("All")
+                                }
+                                TextButton(onClick = { selectedClasses = emptySet() }) {
+                                    Text("Clear")
+                                }
+                            }
+                        }
+                        if (selectedClasses.isEmpty() && snapshot.classes.isNotEmpty()) {
+                            Text(
+                                text = "Tap at least one class below (e.g., Class 8) so this teacher can see students and enter marks.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = CrimsonFail
+                            )
+                        }
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             snapshot.classes.forEach { cls ->
                                 val picked = selectedClasses.contains(cls.id)
@@ -727,22 +890,50 @@ fun SettingsScreen(
                 }
             },
             confirmButton = {
-                Button(onClick = {
-                    if (uid.isNotBlank() && name.isNotBlank() && email.isNotBlank()) {
+                Button(
+                    enabled = canSave,
+                    onClick = {
                         viewModel.saveStaffMember(
                             campus = snapshot.campus,
                             userUid = uid,
                             email = email,
                             displayName = name,
                             role = role,
-                            assignedClassIds = selectedClasses.toList(),
+                            assignedClassIds = if (role == StaffRole.TEACHER) selectedClasses.toList() else emptyList(),
                             active = true
                         )
                         showAddStaffDialog = false
-                    }
-                }) { Text("Save Staff") }
+                        editingStaff = null
+                    },
+                    modifier = Modifier.testTag("save_staff_btn")
+                ) { Text("Save Staff") }
             },
-            dismissButton = { TextButton(onClick = { showAddStaffDialog = false }) { Text("Cancel") } }
+            dismissButton = {
+                TextButton(onClick = {
+                    showAddStaffDialog = false
+                    editingStaff = null
+                }) { Text("Cancel") }
+            }
+        )
+    }
+
+    pendingDeleteStaff?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteStaff = null },
+            title = { Text("Remove Staff Access?") },
+            text = { Text("Remove ${target.displayName} (${target.email}) from ${snapshot.campus.campusName}?") },
+            confirmButton = {
+                Button(
+                    colors = ButtonDefaults.buttonColors(containerColor = CrimsonFail),
+                    onClick = {
+                        viewModel.removeStaffMember(snapshot.campus, target.userUid.ifBlank { target.id })
+                        pendingDeleteStaff = null
+                    }
+                ) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteStaff = null }) { Text("Cancel") }
+            }
         )
     }
 }

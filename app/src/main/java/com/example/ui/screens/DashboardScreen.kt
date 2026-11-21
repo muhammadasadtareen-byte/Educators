@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.PendingActions
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -78,9 +79,11 @@ import com.example.ui.theme.EmeraldPassContainer
 @Composable
 fun DashboardScreen(
     snapshot: SchoolSnapshot,
+    currentUserId: String = "",
     onSelectSession: (String) -> Unit,
     onSelectExam: (String) -> Unit,
     onNavigate: (String) -> Unit,
+    onSwitchCampus: (campusId: String, label: String) -> Unit = { _, _ -> },
     onUpdateExam: (examId: String, sessionId: String, name: String, examType: ExamType, useCustomGrading: Boolean, sortOrder: Long, components: List<ExamComponent>) -> Unit = { _, _, _, _, _, _, _ -> },
     onCreateExam: (sessionId: String, name: String, examType: ExamType, useCustomGrading: Boolean, sortOrder: Long, components: List<ExamComponent>) -> Unit = { _, _, _, _, _, _ -> },
     onDeleteExam: (examId: String) -> Unit = {}
@@ -197,6 +200,66 @@ fun DashboardScreen(
                                     Text("Students")
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Shared School Portal Banner (auto-surfaces invited campus for teachers)
+        val otherCampuses = snapshot.accessibleCampuses.filter { it.id != snapshot.campus.id }
+        val invitedOther = otherCampuses.firstOrNull { it.ownerId != currentUserId } ?: otherCampuses.firstOrNull()
+        if (invitedOther != null) {
+            item {
+                val isSwitchingToShared = invitedOther.ownerId != currentUserId
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isSwitchingToShared) EmeraldPassContainer else EducatorsBlueSurface
+                    ),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isSwitchingToShared) EmeraldPass.copy(alpha = 0.5f) else EducatorsBlue.copy(alpha = 0.4f)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (isSwitchingToShared) "Shared School Portal Available" else "Personal Workspace Available",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                color = EducatorsNavy
+                            )
+                            Text(
+                                text = "${invitedOther.schoolName} — ${invitedOther.campusName}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                onSwitchCampus(
+                                    invitedOther.id,
+                                    "${invitedOther.schoolName} (${invitedOther.campusName})"
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isSwitchingToShared) EmeraldPass else EducatorsBlue
+                            ),
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .testTag("dashboard_switch_campus_btn")
+                        ) {
+                            Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Switch")
                         }
                     }
                 }
@@ -355,10 +418,15 @@ fun DashboardScreen(
 
         if (snapshot.classStats.isEmpty()) {
             item {
+                val isTeacherRole = snapshot.effectiveRole == StaffRole.TEACHER
                 EmptyStateCard(
                     icon = Icons.AutoMirrored.Filled.Assignment,
-                    title = "No Classes Configured Yet",
-                    description = "Create classes (Playgroup through Class 10) and subjects to start enrolling students and entering marks.",
+                    title = if (isTeacherRole) "No Classes Assigned Yet" else "No Classes Configured Yet",
+                    description = if (isTeacherRole) {
+                        "Ask your campus Admin to open Settings → Staff Accounts, tap Edit next to your name, and assign your classes (e.g., Class 8)."
+                    } else {
+                        "Create classes (Playgroup through Class 10) and subjects to start enrolling students and entering marks."
+                    },
                     actionLabel = if (snapshot.effectiveRole == StaffRole.ADMIN) "Go to Class Management" else null,
                     onAction = if (snapshot.effectiveRole == StaffRole.ADMIN) {
                         { onNavigate(AppRoute.CLASSES) }

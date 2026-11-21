@@ -62,7 +62,8 @@ data class SchoolSnapshot(
     val isOwnerOrAdmin: Boolean,
     val assignedClassIds: List<String>,
     val selectedSessionId: String,
-    val selectedExamId: String
+    val selectedExamId: String,
+    val accessibleCampuses: List<Campus> = emptyList()
 ) {
     val classesById: Map<String, SchoolClass> = classes.associateBy { it.id }
     val sectionsById: Map<String, ClassSection> = sections.associateBy { it.id }
@@ -71,7 +72,7 @@ data class SchoolSnapshot(
     val selectedSession: AcademicSession? = sessions.firstOrNull { it.id == selectedSessionId } ?: sessions.firstOrNull()
 
     val visibleClasses: List<SchoolClass> =
-        if (effectiveRole == StaffRole.ADMIN || assignedClassIds.isEmpty()) {
+        if (effectiveRole == StaffRole.ADMIN) {
             classes.sortedBy { it.sortOrder }
         } else {
             classes.filter { it.id in assignedClassIds }.sortedBy { it.sortOrder }
@@ -80,7 +81,7 @@ data class SchoolSnapshot(
     val visibleStudents: List<Student> =
         students.filter { st ->
             (selectedSessionId.isBlank() || st.sessionId == selectedSessionId) &&
-                (effectiveRole == StaffRole.ADMIN || assignedClassIds.isEmpty() || st.classId in assignedClassIds)
+                (effectiveRole == StaffRole.ADMIN || st.classId in assignedClassIds)
         }
 
     val activeExamMarks: List<MarkEntry> =
@@ -204,7 +205,12 @@ class MainViewModel(
             ControlBundle(records, sessOverride, examOverride, roleOverride, previewClasses)
         }
 
-        return combine(coreFlow, academicFlow, controlsFlow) { core, acad, ctrl ->
+        return combine(
+            coreFlow,
+            academicFlow,
+            controlsFlow,
+            repository.observeAccessibleCampuses()
+        ) { core, acad, ctrl, accessibleCampuses ->
             val campus = core.campus ?: Campus(id = campusId, ownerId = currentUserId, memberUids = listOf(currentUserId))
             val myStaff = core.staff.firstOrNull { it.userUid == currentUserId || it.id == currentUserId }
             val isOwnerOrAdmin = campus.ownerId == currentUserId || myStaff?.parsedRole() == StaffRole.ADMIN
@@ -243,8 +249,27 @@ class MainViewModel(
                 isOwnerOrAdmin = isOwnerOrAdmin,
                 assignedClassIds = assignedClasses,
                 selectedSessionId = sessId,
-                selectedExamId = examId
+                selectedExamId = examId,
+                accessibleCampuses = accessibleCampuses
             )
+        }
+    }
+
+    fun switchCampus(campusId: String, campusLabel: String) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            val res = repository.switchActiveCampus(campusId)
+            _isBusy.value = false
+            res.onSuccess {
+                _selectedSessionId.value = null
+                _selectedExamId.value = null
+                _rolePreviewOverride.value = null
+                _previewAssignedClassIds.value = emptyList()
+                _campusId.value = campusId
+                _actionMessage.value = "Switched to $campusLabel."
+            }.onFailure {
+                _actionMessage.value = it.message ?: "Failed to switch campus."
+            }
         }
     }
 
@@ -477,8 +502,12 @@ class MainViewModel(
         role: StaffRole,
         assignedClassIds: List<String>,
         active: Boolean
-    ) = runMutation("Staff member saved.") {
+    ) = runMutation("Staff member & class assignments saved.") {
         repository.saveStaffMember(campus, userUid, email, displayName, role, assignedClassIds, active)
+    }
+
+    fun removeStaffMember(campus: Campus, staffUid: String) = runMutation("Staff member removed.") {
+        repository.removeStaffMember(campus, staffUid)
     }
 
     fun importStudents(campus: Campus, drafts: List<ImportedStudentDraft>) {

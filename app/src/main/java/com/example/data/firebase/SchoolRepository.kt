@@ -70,24 +70,55 @@ class SchoolRepository(
             val displayName = auth.currentUser?.displayName?.takeIf { it.isNotBlank() }
                 ?: email.substringBefore("@").ifBlank { "Administrator" }
 
-            // 1. Check user profile
+            // 1. Check all campuses this user belongs to (owned or invited staff)
+            val memberCampuses = db.collection("campuses")
+                .whereArrayContains("memberUids", uid)
+                .get()
+                .await()
+            val invitedCampusDoc = memberCampuses.documents.firstOrNull { it.getString("ownerId") != uid }
+
+            // 2. Check user profile
             val userRef = db.collection("users").document(uid)
             path = userRef.path
             val userSnap = userRef.get().await()
             val existingProfile = userSnap.toObject(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
             if (existingProfile != null && existingProfile.activeCampusId.isNotBlank()) {
-                val campusSnap = campusDoc(existingProfile.activeCampusId).get().await()
-                if (campusSnap.exists()) {
-                    return Result.success(existingProfile.activeCampusId)
+                val activeId = existingProfile.activeCampusId
+                val activeCampusDoc = memberCampuses.documents.firstOrNull { it.id == activeId }
+                    ?: runCatching { campusDoc(activeId).get().await() }.getOrNull()
+                if (activeCampusDoc != null && activeCampusDoc.exists()) {
+                    val isOwnCampus = activeCampusDoc.getString("ownerId") == uid
+                    // If user was invited to a shared school campus and their auto-created personal
+                    // workspace has no classes or students yet, switch them to the shared campus automatically.
+                    if (isOwnCampus && invitedCampusDoc != null) {
+                        val ownClasses = campusDoc(activeId).collection("classes")
+                            .whereArrayContains("memberUids", uid)
+                            .limit(1)
+                            .get()
+                            .await()
+                        val ownStudents = campusDoc(activeId).collection("students")
+                            .whereArrayContains("memberUids", uid)
+                            .limit(1)
+                            .get()
+                            .await()
+                        if (ownClasses.isEmpty && ownStudents.isEmpty) {
+                            userRef.update(
+                                mapOf(
+                                    "email" to email.take(120),
+                                    "displayName" to displayName.take(100),
+                                    "activeCampusId" to invitedCampusDoc.id,
+                                    "updatedAt" to FieldValue.serverTimestamp()
+                                )
+                            ).await()
+                            return Result.success(invitedCampusDoc.id)
+                        }
+                    }
+                    return Result.success(activeId)
                 }
             }
 
-            // 2. Check if user is already a member of any campus (e.g. invited Teacher/Admin)
-            val memberCampuses = db.collection("campuses")
-                .whereArrayContains("memberUids", uid)
-                .get()
-                .await()
-            val existingCampusId = memberCampuses.documents.firstOrNull()?.id
+            // 3. Prefer any invited/shared campus first, otherwise any existing campus membership
+            val existingCampusId = invitedCampusDoc?.id ?: memberCampuses.documents.firstOrNull()?.id
             if (existingCampusId != null) {
                 val userPayload = mapOf(
                     "userId" to uid,
@@ -255,6 +286,56 @@ class SchoolRepository(
     }
 
     // --- REALTIME OBSERVATION FLOWS (Query-Rule Parity: .whereArrayContains("memberUids", uid)) ---
+
+    fun observeAccessibleCampuses(): Flow<List<Campus>> {
+        val uid = requireUserId()
+        return db.collection("campuses")
+            .whereArrayContains("memberUids", uid)
+            .snapshots()
+            .map { snap ->
+                snap.toObjects(Campus::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    .sortedWith(compareBy<Campus> { if (it.ownerId == uid) 1 else 0 }.thenBy { it.campusName })
+            }
+    }
+
+    suspend fun switchActiveCampus(campusId: String): Result<Unit> {
+        val uid = requireUserId()
+        val userRef = db.collection("users").document(uid)
+        return try {
+            require(campusId.isNotBlank()) { "Campus ID is required." }
+            val email = auth.currentUser?.email.orEmpty()
+            val displayName = auth.currentUser?.displayName?.takeIf { it.isNotBlank() }
+                ?: email.substringBefore("@").ifBlank { "Staff Member" }
+            val userSnap = userRef.get().await()
+            if (userSnap.exists()) {
+                userRef.update(
+                    mapOf(
+                        "email" to email.take(120),
+                        "displayName" to displayName.take(100),
+                        "activeCampusId" to campusId,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            } else {
+                userRef.set(
+                    mapOf(
+                        "userId" to uid,
+                        "email" to email.take(120),
+                        "displayName" to displayName.take(100),
+                        "activeCampusId" to campusId,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, userRef.path)
+            Result.failure(e)
+        }
+    }
 
     fun observeCampus(campusId: String): Flow<Campus?> =
         campusDoc(campusId).snapshots().map { snap ->
@@ -1182,13 +1263,44 @@ class SchoolRepository(
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 ).await()
+            }
+            // Self-healing sync: ensures all campus docs (classes, sections, subjects, students, etc.)
+            // include every active staff member UID so teachers immediately see their assigned classes.
+            syncMemberUidsAcrossCampus(campus.id, updatedMembers, currentUid)
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, ref.path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun removeStaffMember(campus: Campus, staffUid: String): Result<Unit> {
+        val cleanUid = staffUid.trim()
+        val ref = campusDoc(campus.id).collection("staff").document(cleanUid)
+        return try {
+            val currentUid = requireUserId()
+            require(cleanUid.isNotBlank() && cleanUid != campus.ownerId) {
+                "Campus owner account cannot be removed."
+            }
+            ref.delete().await()
+            val updatedMembers = campus.memberUids.filterNot { it == cleanUid }
+                .ifEmpty { listOf(campus.ownerId) }
+            if (updatedMembers != campus.memberUids) {
+                campusDoc(campus.id).update(
+                    mapOf(
+                        "memberUids" to updatedMembers,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
                 syncMemberUidsAcrossCampus(campus.id, updatedMembers, currentUid)
             }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.WRITE, ref.path)
+            handleFirestoreError(e, OperationType.DELETE, ref.path)
             Result.failure(e)
         }
     }
@@ -1202,6 +1314,7 @@ class SchoolRepository(
             "staff", "sessions", "examinations", "classes", "sections",
             "subjects", "students", "marks", "grading_rules", "result_records"
         )
+        val targetSet = memberUids.toSet()
         val docRefsWithCollection = mutableListOf<Pair<String, com.google.firebase.firestore.DocumentReference>>()
         for (colName in collections) {
             val snap = campusDoc(campusId).collection(colName)
@@ -1209,7 +1322,13 @@ class SchoolRepository(
                 .get()
                 .await()
             snap.documents.forEach { d ->
-                docRefsWithCollection.add(colName to d.reference)
+                val existingMembers = (d.get("memberUids") as? List<*>)
+                    ?.mapNotNull { it as? String }
+                    ?.toSet()
+                    ?: emptySet()
+                if (existingMembers != targetSet) {
+                    docRefsWithCollection.add(colName to d.reference)
+                }
             }
         }
         docRefsWithCollection.chunked(400).forEach { chunk ->
