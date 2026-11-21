@@ -3,6 +3,8 @@ package com.example.domain
 import com.example.data.model.AcademicSession
 import com.example.data.model.ClassSection
 import com.example.data.model.ClassPerformanceStats
+import com.example.data.model.ExamComponent
+import com.example.data.model.ExamSubjectConfig
 import com.example.data.model.Examination
 import com.example.data.model.GradingRule
 import com.example.data.model.MarkEntry
@@ -78,14 +80,47 @@ object ResultCalculator {
 
     const val PASSING_PERCENTAGE = 40.0
 
-    fun effectiveSubjectMaxMarks(subject: Subject, examination: Examination?): Double {
+    fun effectiveComponentsForSubject(
+        subject: Subject,
+        examination: Examination?,
+        subjectConfigsByKey: Map<String, ExamSubjectConfig> = emptyMap()
+    ): List<ExamComponent> {
         val comps = examination?.components.orEmpty()
-        val compSum = comps.sumOf { it.maxMarks }
-        return if (comps.isNotEmpty() && compSum > 0.0) compSum else subject.maxMarks
+        if (comps.isEmpty()) return emptyList()
+        val cfg = examination?.let { subjectConfigsByKey["${it.id}_${subject.id}"] } ?: return comps
+        if (cfg.componentMaxMarks.isEmpty()) return comps
+        return comps.map { comp ->
+            val override = cfg.componentMaxMarks[comp.id]
+            if (override != null && override > 0.0) {
+                comp.copy(
+                    maxMarks = override,
+                    weightPercentage = if (comp.isCarryForward()) override else comp.weightPercentage
+                )
+            } else {
+                comp
+            }
+        }
     }
 
-    fun effectiveSubjectPassingMarks(subject: Subject, examination: Examination?): Double {
-        val effMax = effectiveSubjectMaxMarks(subject, examination)
+    fun effectiveSubjectMaxMarks(
+        subject: Subject,
+        examination: Examination?,
+        subjectConfigsByKey: Map<String, ExamSubjectConfig> = emptyMap()
+    ): Double {
+        val comps = effectiveComponentsForSubject(subject, examination, subjectConfigsByKey)
+        val compSum = comps.sumOf { it.maxMarks }
+        if (comps.isNotEmpty() && compSum > 0.0) return compSum
+        val cfg = examination?.let { subjectConfigsByKey["${it.id}_${subject.id}"] }
+        if (cfg != null && cfg.totalMaxMarks > 0.0) return cfg.totalMaxMarks
+        return subject.maxMarks
+    }
+
+    fun effectiveSubjectPassingMarks(
+        subject: Subject,
+        examination: Examination?,
+        subjectConfigsByKey: Map<String, ExamSubjectConfig> = emptyMap()
+    ): Double {
+        val effMax = effectiveSubjectMaxMarks(subject, examination, subjectConfigsByKey)
         return ((effMax * (PASSING_PERCENTAGE / 100.0)) * 100.0).roundToInt() / 100.0
     }
 
@@ -95,12 +130,14 @@ object ResultCalculator {
         examination: Examination?,
         allExaminationsById: Map<String, Examination>,
         allSessionMarksByKey: Map<String, MarkEntry>,
+        subjectConfigsByKey: Map<String, ExamSubjectConfig> = emptyMap(),
         visitedExamIds: Set<String> = emptySet()
     ): Map<String, Double> {
-        if (examination == null || examination.components.isEmpty()) return emptyMap()
+        val effComps = effectiveComponentsForSubject(subject, examination, subjectConfigsByKey)
+        if (examination == null || effComps.isEmpty()) return emptyMap()
         val nextVisited = visitedExamIds + examination.id
         val out = linkedMapOf<String, Double>()
-        examination.components.forEach { comp ->
+        effComps.forEach { comp ->
             if (comp.isCarryForward() && comp.maxMarks > 0.0 && comp.sourceExamId !in nextVisited) {
                 val sourceExam = allExaminationsById[comp.sourceExamId] ?: return@forEach
                 val sourceResolved = resolveSubjectScoreForExam(
@@ -109,6 +146,7 @@ object ResultCalculator {
                     examination = sourceExam,
                     allExaminationsById = allExaminationsById,
                     allSessionMarksByKey = allSessionMarksByKey,
+                    subjectConfigsByKey = subjectConfigsByKey,
                     visitedExamIds = nextVisited
                 )
                 if (sourceResolved != null && sourceResolved.second > 0.0) {
@@ -132,12 +170,13 @@ object ResultCalculator {
         examination: Examination?,
         allExaminationsById: Map<String, Examination>,
         allSessionMarksByKey: Map<String, MarkEntry>,
+        subjectConfigsByKey: Map<String, ExamSubjectConfig>,
         visitedExamIds: Set<String>
     ): Pair<Double, Double>? {
         val examId = examination?.id.orEmpty()
         val mark = allSessionMarksByKey["${examId}_${studentId}_${subject.id}"]
-        val effMax = effectiveSubjectMaxMarks(subject, examination)
-        val comps = examination?.components.orEmpty()
+        val effMax = effectiveSubjectMaxMarks(subject, examination, subjectConfigsByKey)
+        val comps = effectiveComponentsForSubject(subject, examination, subjectConfigsByKey)
         if (comps.isEmpty()) {
             return mark?.let { it.obtainedMarks.coerceIn(0.0, effMax) to effMax }
         }
@@ -147,6 +186,7 @@ object ResultCalculator {
             examination = examination,
             allExaminationsById = allExaminationsById,
             allSessionMarksByKey = allSessionMarksByKey,
+            subjectConfigsByKey = subjectConfigsByKey,
             visitedExamIds = visitedExamIds
         )
         val manualComps = comps.filter { !it.isCarryForward() }
@@ -179,6 +219,7 @@ object ResultCalculator {
         highestMarksInClass: Double? = null,
         effectiveMaxMarks: Double = subject.maxMarks,
         resolvedComponentMarks: Map<String, Double> = markEntry?.componentMarks ?: emptyMap(),
+        effectiveComponents: List<ExamComponent> = emptyList(),
         forceEntered: Boolean = false,
         overrideObtainedMarks: Double? = null
     ): SubjectResult {
@@ -199,7 +240,8 @@ object ResultCalculator {
                 entered = false,
                 effectiveMaxMarks = effMax,
                 effectivePassingMarks = effPass,
-                resolvedComponentMarks = resolvedComponentMarks
+                resolvedComponentMarks = resolvedComponentMarks,
+                effectiveComponents = effectiveComponents
             )
         }
         val rawObtained = overrideObtainedMarks ?: markEntry?.obtainedMarks ?: 0.0
@@ -223,7 +265,8 @@ object ResultCalculator {
             entered = true,
             effectiveMaxMarks = effMax,
             effectivePassingMarks = effPass,
-            resolvedComponentMarks = resolvedComponentMarks
+            resolvedComponentMarks = resolvedComponentMarks,
+            effectiveComponents = effectiveComponents
         )
     }
 
@@ -238,7 +281,8 @@ object ResultCalculator {
         examination: Examination?,
         allGradingRules: List<GradingRule>,
         allExaminations: List<Examination> = emptyList(),
-        allSessionMarks: List<MarkEntry> = marks
+        allSessionMarks: List<MarkEntry> = marks,
+        examSubjectConfigs: List<ExamSubjectConfig> = emptyList()
     ): List<StudentResultSummary> {
         if (students.isEmpty()) return emptyList()
 
@@ -246,8 +290,8 @@ object ResultCalculator {
         val sortedSubjects = subjects.sortedWith(compareBy<Subject> { it.sortOrder }.thenBy { it.name })
         val marksByStudentAndSubject = marks.associateBy { "${it.studentId}_${it.subjectId}" }
         val recordsByStudentId = resultRecords.associateBy { it.studentId }
+        val subjectConfigsByKey = examSubjectConfigs.associateBy { "${it.examId}_${it.subjectId}" }
         val examComponents = examination?.components.orEmpty()
-        val manualComponents = examComponents.filter { !it.isCarryForward() }
         val hasCarryForward = examComponents.any { it.isCarryForward() }
 
         val allExamsById = buildMap {
@@ -257,10 +301,11 @@ object ResultCalculator {
         val allSessionMarksByKey = allSessionMarks.associateBy { "${it.examId}_${it.studentId}_${it.subjectId}" }
 
         // Pre-resolve every (student, subject) effective score & component map so Highest Marks in Class
-        // reflects carried-forward term weights accurately too.
+        // reflects per-subject total overrides and carried-forward term weights accurately too.
         data class ResolvedCell(
             val markEntry: MarkEntry?,
             val effMax: Double,
+            val effComponents: List<ExamComponent>,
             val resolvedCompMap: Map<String, Double>,
             val entered: Boolean,
             val obtained: Double?
@@ -273,20 +318,23 @@ object ResultCalculator {
             val classSubjects = sortedSubjects.filter { it.classId == student.classId }
             classSubjects.forEach { sub ->
                 val mark = marksByStudentAndSubject["${student.id}_${sub.id}"]
-                val effMax = effectiveSubjectMaxMarks(sub, examination)
+                val subEffComponents = effectiveComponentsForSubject(sub, examination, subjectConfigsByKey)
+                val subManualComponents = subEffComponents.filter { !it.isCarryForward() }
+                val effMax = effectiveSubjectMaxMarks(sub, examination, subjectConfigsByKey)
                 val carryMap = if (hasCarryForward) {
                     resolveCarryForwardComponentMarks(
                         studentId = student.id,
                         subject = sub,
                         examination = examination,
                         allExaminationsById = allExamsById,
-                        allSessionMarksByKey = allSessionMarksByKey
+                        allSessionMarksByKey = allSessionMarksByKey,
+                        subjectConfigsByKey = subjectConfigsByKey
                     )
                 } else emptyMap()
 
                 val mergedCompMap = linkedMapOf<String, Double>()
-                if (examComponents.isNotEmpty()) {
-                    examComponents.forEach { comp ->
+                if (subEffComponents.isNotEmpty()) {
+                    subEffComponents.forEach { comp ->
                         if (comp.isCarryForward()) {
                             carryMap[comp.id]?.let { mergedCompMap[comp.id] = it }
                         } else {
@@ -300,14 +348,14 @@ object ResultCalculator {
                 }
 
                 val entered = when {
-                    examComponents.isEmpty() -> mark != null
-                    manualComponents.isEmpty() -> mergedCompMap.isNotEmpty()
+                    subEffComponents.isEmpty() -> mark != null
+                    subManualComponents.isEmpty() -> mergedCompMap.isNotEmpty()
                     else -> mark != null
                 }
 
                 val obtained: Double? = if (!entered) {
                     null
-                } else if (examComponents.isNotEmpty() && mergedCompMap.isNotEmpty()) {
+                } else if (subEffComponents.isNotEmpty() && mergedCompMap.isNotEmpty()) {
                     mergedCompMap.values.sum().coerceIn(0.0, effMax)
                 } else {
                     (mark?.obtainedMarks ?: 0.0).coerceIn(0.0, effMax)
@@ -316,6 +364,7 @@ object ResultCalculator {
                 resolvedByStudentSubject[student.id to sub.id] = ResolvedCell(
                     markEntry = mark,
                     effMax = effMax,
+                    effComponents = subEffComponents,
                     resolvedCompMap = mergedCompMap,
                     entered = entered,
                     obtained = obtained
@@ -340,8 +389,9 @@ object ResultCalculator {
                     markEntry = cell?.markEntry,
                     gradingRules = activeRules,
                     highestMarksInClass = highest,
-                    effectiveMaxMarks = cell?.effMax ?: effectiveSubjectMaxMarks(sub, examination),
+                    effectiveMaxMarks = cell?.effMax ?: effectiveSubjectMaxMarks(sub, examination, subjectConfigsByKey),
                     resolvedComponentMarks = cell?.resolvedCompMap ?: emptyMap(),
+                    effectiveComponents = cell?.effComponents ?: effectiveComponentsForSubject(sub, examination, subjectConfigsByKey),
                     forceEntered = cell?.entered == true,
                     overrideObtainedMarks = cell?.obtained
                 )

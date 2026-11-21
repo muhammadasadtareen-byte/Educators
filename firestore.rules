@@ -210,6 +210,37 @@ service cloud.firestore {
         data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
+    function isValidExamSubjectConfig(data) {
+      return isValidId(data.ownerId) &&
+        isValidMemberList(data.memberUids) &&
+        isValidId(data.examId) &&
+        isValidId(data.classId) &&
+        isValidId(data.subjectId) &&
+        data.totalMaxMarks is number && data.totalMaxMarks >= 0 && data.totalMaxMarks <= 1000 &&
+        (!('componentMaxMarks' in data) || (data.componentMaxMarks is map && data.componentMaxMarks.size() <= 10)) &&
+        isValidId(data.updatedByUid) &&
+        data.updatedByName is string && data.updatedByName.size() <= 100 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidActivityLog(data) {
+      return isValidId(data.ownerId) &&
+        isValidMemberList(data.memberUids) &&
+        isValidId(data.actorUid) &&
+        data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 100 &&
+        data.actorEmail is string && data.actorEmail.size() <= 120 &&
+        data.actorRole in ['ADMIN', 'TEACHER'] &&
+        data.actionType in ['MARKS_SAVED', 'TOTAL_MARKS_UPDATED', 'REMARKS_SAVED'] &&
+        data.summary is string && data.summary.size() >= 1 && data.summary.size() <= 300 &&
+        data.classId is string && data.classId.size() <= 128 &&
+        data.className is string && data.className.size() <= 80 &&
+        data.subjectName is string && data.subjectName.size() <= 80 &&
+        data.examName is string && data.examName.size() <= 80 &&
+        data.studentName is string && data.studentName.size() <= 100 &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
     match /users/{userId} {
       allow get: if isOwner(userId) && isValidId(userId);
       allow list: if isOwner(userId);
@@ -415,6 +446,45 @@ service cloud.firestore {
           (isCampusAdmin(campusId) || isCampusTeacherForClass(campusId, existing().classId)) &&
           incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'classId', 'sectionId', 'totalMaxMarks', 'totalObtainedMarks', 'percentage', 'grade', 'passed', 'status', 'position', 'teacherRemarks', 'updatedAt']);
         allow delete: if isValidId(recordId) && isCampusAdmin(campusId);
+      }
+
+      match /exam_subject_configs/{configId} {
+        allow get: if isValidId(configId) && isCampusMember(existing());
+        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow create: if isSignedIn() && isValidId(configId) &&
+          incoming().updatedByUid == request.auth.uid &&
+          incoming().keys().hasAll(['ownerId', 'memberUids', 'examId', 'classId', 'subjectId', 'totalMaxMarks', 'updatedByUid', 'updatedByName', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['ownerId', 'memberUids', 'examId', 'classId', 'subjectId', 'totalMaxMarks', 'componentMaxMarks', 'updatedByUid', 'updatedByName', 'createdAt', 'updatedAt']) &&
+          isValidExamSubjectConfig(incoming()) &&
+          (isCampusAdmin(campusId) || isCampusTeacherForClass(campusId, incoming().classId));
+        allow update: if isValidId(configId) &&
+          isValidExamSubjectConfig(incoming()) &&
+          incoming().updatedByUid == request.auth.uid &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().examId == existing().examId &&
+          incoming().subjectId == existing().subjectId &&
+          (isCampusAdmin(campusId) || isCampusTeacherForClass(campusId, existing().classId)) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'classId', 'totalMaxMarks', 'componentMaxMarks', 'updatedByUid', 'updatedByName', 'updatedAt']);
+        allow delete: if isValidId(configId) &&
+          (isCampusAdmin(campusId) || isCampusTeacherForClass(campusId, existing().classId));
+      }
+
+      match /activity_logs/{logId} {
+        allow get: if isValidId(logId) && isCampusAdmin(campusId) && isCampusMember(existing());
+        allow list: if isSignedIn() && isCampusAdmin(campusId) && request.auth.uid in resource.data.memberUids;
+        allow create: if isSignedIn() && isValidId(logId) &&
+          incoming().actorUid == request.auth.uid &&
+          incoming().keys().hasAll(['ownerId', 'memberUids', 'actorUid', 'actorName', 'actorEmail', 'actorRole', 'actionType', 'summary', 'classId', 'className', 'subjectName', 'examName', 'studentName', 'createdAt']) &&
+          incoming().keys().hasOnly(['ownerId', 'memberUids', 'actorUid', 'actorName', 'actorEmail', 'actorRole', 'actionType', 'summary', 'classId', 'className', 'subjectName', 'examName', 'studentName', 'createdAt']) &&
+          isValidActivityLog(incoming()) &&
+          (isCampusAdmin(campusId) || isCampusTeacherForClass(campusId, incoming().classId));
+        allow update: if isValidId(logId) &&
+          isCampusAdmin(campusId) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids']);
+        allow delete: if isValidId(logId) && isCampusAdmin(campusId);
       }
     }
   }

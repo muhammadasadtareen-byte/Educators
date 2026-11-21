@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Class
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.People
@@ -96,6 +97,7 @@ import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.StatusPill
 import com.example.ui.screens.StudentsScreen
 import com.example.ui.screens.SubjectsScreen
+import com.example.ui.screens.TeacherActivityScreen
 import com.example.ui.theme.EducatorsNavy
 import com.example.ui.theme.EducatorsTheme
 import com.google.firebase.Firebase
@@ -118,6 +120,7 @@ object AppRoute {
     const val CLASS_RESULTS = "class_results"
     const val EXCEL_CENTER = "excel_export"
     const val PDF_CENTER = "pdf_export"
+    const val TEACHER_ACTIVITY = "teacher_activity"
     const val SETTINGS = "settings"
 }
 
@@ -138,6 +141,7 @@ private val ALL_DESTINATIONS = listOf(
     NavDestination(AppRoute.CLASS_RESULTS, "Class Results", Icons.Default.Assessment),
     NavDestination(AppRoute.EXCEL_CENTER, "Excel Export", Icons.Default.TableChart),
     NavDestination(AppRoute.PDF_CENTER, "PDF Export", Icons.Default.PictureAsPdf),
+    NavDestination(AppRoute.TEACHER_ACTIVITY, "Teacher Activity", Icons.Default.History, adminOnly = true),
     NavDestination(AppRoute.SETTINGS, "Settings", Icons.Default.Settings)
 )
 
@@ -274,7 +278,11 @@ private fun MainAdaptiveShell(
         }
     }
 
-    val currentTitle = ALL_DESTINATIONS.firstOrNull { it.route == currentRoute }?.label ?: "Educators Results"
+    val currentTitle = if (currentRoute == AppRoute.SETTINGS && snapshot.effectiveRole == StaffRole.TEACHER) {
+        "Teacher Account"
+    } else {
+        ALL_DESTINATIONS.firstOrNull { it.route == currentRoute }?.label ?: "Educators Results"
+    }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val isWideScreen = maxWidth >= 840.dp
@@ -427,11 +435,16 @@ private fun DrawerContentBody(
         HorizontalDivider()
         Spacer(Modifier.height(8.dp))
         destinations.forEach { dest ->
+            val labelText = if (dest.route == AppRoute.SETTINGS && snapshot.effectiveRole == StaffRole.TEACHER) {
+                "Teacher Account"
+            } else {
+                dest.label
+            }
             NavigationDrawerItem(
-                label = { Text(dest.label) },
+                label = { Text(labelText) },
                 selected = currentRoute == dest.route,
                 onClick = { onSelectRoute(dest.route) },
-                icon = { Icon(dest.icon, contentDescription = dest.label) },
+                icon = { Icon(dest.icon, contentDescription = labelText) },
                 modifier = Modifier.padding(vertical = 2.dp)
             )
         }
@@ -516,6 +529,9 @@ private fun AppNavHost(
         }
         composable(AppRoute.PDF_CENTER) {
             PdfCenterScreen(snapshot = snapshot, viewModel = viewModel)
+        }
+        composable(AppRoute.TEACHER_ACTIVITY) {
+            TeacherActivityScreen(snapshot = snapshot)
         }
         composable(AppRoute.SETTINGS) {
             SettingsScreen(snapshot = snapshot, viewModel = viewModel)

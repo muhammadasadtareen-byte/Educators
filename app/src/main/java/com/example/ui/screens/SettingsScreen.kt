@@ -157,15 +157,26 @@ fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            TabLegendCard(
-                tabTitle = "Settings",
-                summary = "Configure school branding, academic sessions, editable examinations, grading scales & staff roles.",
-                items = listOf(
-                    LegendBadge("ADMIN", EmeraldPass, "Full school, exam & student control"),
-                    LegendBadge("TEACHER", AmberPending, "Marks & reports for assigned classes"),
-                    LegendBadge("Edit Exam", EducatorsBlue, "Rename, reorder or customize exam")
+            if (isAdmin) {
+                TabLegendCard(
+                    tabTitle = "Settings",
+                    summary = "Configure school branding, academic sessions, editable examinations, grading scales & staff roles.",
+                    items = listOf(
+                        LegendBadge("ADMIN", EmeraldPass, "Full school, exam & student control"),
+                        LegendBadge("TEACHER", AmberPending, "Marks & reports for assigned classes"),
+                        LegendBadge("Edit Exam", EducatorsBlue, "Rename, reorder or customize exam")
+                    )
                 )
-            )
+            } else {
+                TabLegendCard(
+                    tabTitle = "Teacher Account",
+                    summary = "View your assigned classes, school portal details, and manage your signed-in account.",
+                    items = listOf(
+                        LegendBadge("TEACHER", AmberPending, "Edit total marks & enter student marks"),
+                        LegendBadge("Live Sync", EmeraldPass, "Marks sync instantly with school campus")
+                    )
+                )
+            }
         }
 
         // 1. Account & Role Access
@@ -176,7 +187,72 @@ fun SettingsScreen(
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Account & Role Access", style = MaterialTheme.typography.titleMedium, color = EducatorsNavy)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isAdmin) "Account & Role Access" else "Teacher Profile & Access",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = EducatorsNavy
+                        )
+                        StatusPill(
+                            text = snapshot.effectiveRole.name,
+                            isPositive = isAdmin,
+                            isWarning = !isAdmin
+                        )
+                    }
+
+                    if (snapshot.currentActorName.isNotBlank() || snapshot.currentActorEmail.isNotBlank()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            if (snapshot.currentActorName.isNotBlank()) {
+                                Text(
+                                    text = snapshot.currentActorName,
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = EducatorsNavy
+                                )
+                            }
+                            if (snapshot.currentActorEmail.isNotBlank()) {
+                                Text(
+                                    text = snapshot.currentActorEmail,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    if (!isAdmin) {
+                        val assignedNames = snapshot.visibleClasses.map { it.name }
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.background,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = "Assigned Classes",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = EducatorsNavy
+                                )
+                                Text(
+                                    text = if (assignedNames.isEmpty()) {
+                                        "No classes assigned yet. Contact your school Admin."
+                                    } else {
+                                        assignedNames.joinToString(", ")
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (assignedNames.isEmpty()) CrimsonFail else EducatorsBlue
+                                )
+                            }
+                        }
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -194,14 +270,20 @@ fun SettingsScreen(
                         }
                     }
 
-                    if (snapshot.accessibleCampuses.size > 1) {
+                    // Teachers on a shared school portal must NEVER see their empty personal Admin workspace.
+                    val switchableCampuses = if (snapshot.isOwnerOrAdmin) {
+                        snapshot.accessibleCampuses
+                    } else {
+                        snapshot.accessibleCampuses.filter { it.ownerId != viewModel.currentUserId }
+                    }
+                    if (switchableCampuses.size > 1) {
                         Text(
                             text = "Switch Campus Portal:",
                             style = MaterialTheme.typography.labelMedium,
                             color = EducatorsNavy
                         )
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            snapshot.accessibleCampuses.forEach { camp ->
+                            switchableCampuses.forEach { camp ->
                                 val isCurrent = camp.id == snapshot.campus.id
                                 val isPersonal = camp.ownerId == viewModel.currentUserId
                                 Surface(
@@ -225,7 +307,7 @@ fun SettingsScreen(
                                                 color = EducatorsNavy
                                             )
                                             Text(
-                                                text = "${camp.campusName} • ${if (isPersonal) "Your Campus (Admin)" else "Shared School Portal"}",
+                                                text = "${camp.campusName} • ${if (isPersonal) "Your Campus" else "Shared School Portal"}",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )

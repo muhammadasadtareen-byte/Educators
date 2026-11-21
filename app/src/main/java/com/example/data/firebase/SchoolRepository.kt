@@ -3,9 +3,11 @@ package com.example.data.firebase
 import android.content.Context
 import com.example.R
 import com.example.data.model.AcademicSession
+import com.example.data.model.ActivityLog
 import com.example.data.model.Campus
 import com.example.data.model.ClassSection
 import com.example.data.model.ExamComponent
+import com.example.data.model.ExamSubjectConfig
 import com.example.data.model.ExamType
 import com.example.data.model.Examination
 import com.example.data.model.GradingRule
@@ -366,6 +368,8 @@ class SchoolRepository(
     fun observeMarks(campusId: String) = observeCampusCollection(campusId, "marks", MarkEntry::class.java)
     fun observeGradingRules(campusId: String) = observeCampusCollection(campusId, "grading_rules", GradingRule::class.java)
     fun observeResultRecords(campusId: String) = observeCampusCollection(campusId, "result_records", ResultRecord::class.java)
+    fun observeExamSubjectConfigs(campusId: String) = observeCampusCollection(campusId, "exam_subject_configs", ExamSubjectConfig::class.java)
+    fun observeActivityLogs(campusId: String) = observeCampusCollection(campusId, "activity_logs", ActivityLog::class.java)
 
     // --- CAMPUS & SETTINGS MUTATIONS ---
 
@@ -971,7 +975,12 @@ class SchoolRepository(
         obtainedMarks: Double,
         existingMark: MarkEntry?,
         componentMarks: Map<String, Double> = emptyMap(),
-        maxAllowedMarks: Double = subject.maxMarks
+        maxAllowedMarks: Double = subject.maxMarks,
+        actorName: String = "",
+        actorEmail: String = "",
+        actorRole: StaffRole = StaffRole.TEACHER,
+        className: String = "",
+        examName: String = ""
     ): Result<Unit> {
         val markId = deterministicMarkId(sessionId, examId, student.id, subject.id)
         val ref = campusDoc(campus.id).collection("marks").document(markId)
@@ -1017,12 +1026,199 @@ class SchoolRepository(
                     )
                 ).await()
             }
+            val actionVerb = if (existingMark == null) "Entered" else "Updated"
+            logActivity(
+                campus = campus,
+                actorName = actorName,
+                actorEmail = actorEmail,
+                actorRole = actorRole,
+                actionType = "MARKS_SAVED",
+                summary = "$actionVerb ${subject.name} marks for ${student.name}: ${ResultCalculator.formatMarks(obtainedMarks)} / ${ResultCalculator.formatMarks(ceiling)}",
+                classId = student.classId,
+                className = className,
+                subjectName = subject.name,
+                examName = examName,
+                studentName = student.name
+            )
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, if (existingMark == null) OperationType.CREATE else OperationType.UPDATE, ref.path)
             Result.failure(e)
+        }
+    }
+
+    // --- PER-SUBJECT ASSESSMENT TOTAL MARKS & TEACHER ACTIVITY LOGS ---
+
+    fun deterministicSubjectConfigId(examId: String, subjectId: String): String {
+        return "${examId}_${subjectId}".replace(Regex("[^a-zA-Z0-9_\\-]"), "_").take(128)
+    }
+
+    suspend fun saveExamSubjectConfig(
+        campus: Campus,
+        examId: String,
+        examName: String,
+        classId: String,
+        className: String,
+        subject: Subject,
+        totalMaxMarks: Double,
+        componentMaxMarks: Map<String, Double>,
+        actorName: String,
+        actorEmail: String,
+        actorRole: StaffRole
+    ): Result<Unit> {
+        val configId = deterministicSubjectConfigId(examId, subject.id)
+        val ref = campusDoc(campus.id).collection("exam_subject_configs").document(configId)
+        return try {
+            val uid = requireUserId()
+            val cleanTotal = totalMaxMarks.coerceIn(0.0, 1000.0)
+            val cleanCompMap = componentMaxMarks
+                .filterKeys { it.isNotBlank() }
+                .filterValues { it > 0.0 && it <= 1000.0 }
+                .entries
+                .take(10)
+                .associate { it.key to it.value }
+            val resolvedName = actorName.ifBlank {
+                auth.currentUser?.displayName?.takeIf { it.isNotBlank() }
+                    ?: auth.currentUser?.email?.substringBefore("@")
+                    ?: "Staff"
+            }.take(100)
+            val snap = ref.get().await()
+            if (snap.exists()) {
+                ref.update(
+                    mapOf(
+                        "memberUids" to campus.memberUids,
+                        "classId" to classId,
+                        "totalMaxMarks" to cleanTotal,
+                        "componentMaxMarks" to cleanCompMap,
+                        "updatedByUid" to uid,
+                        "updatedByName" to resolvedName,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            } else {
+                ref.set(
+                    mapOf(
+                        "ownerId" to campus.ownerId,
+                        "memberUids" to campus.memberUids,
+                        "examId" to examId,
+                        "classId" to classId,
+                        "subjectId" to subject.id,
+                        "totalMaxMarks" to cleanTotal,
+                        "componentMaxMarks" to cleanCompMap,
+                        "updatedByUid" to uid,
+                        "updatedByName" to resolvedName,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
+            val effTotal = if (cleanCompMap.isNotEmpty()) cleanCompMap.values.sum() else cleanTotal
+            val pass40 = ResultCalculator.formatMarks(effTotal * 0.40)
+            logActivity(
+                campus = campus,
+                actorName = resolvedName,
+                actorEmail = actorEmail,
+                actorRole = actorRole,
+                actionType = "TOTAL_MARKS_UPDATED",
+                summary = "Updated ${subject.name} total marks in ${examName.ifBlank { "Exam" }} to ${ResultCalculator.formatMarks(effTotal)} (Pass 40%: $pass40)",
+                classId = classId,
+                className = className,
+                subjectName = subject.name,
+                examName = examName,
+                studentName = ""
+            )
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, ref.path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun resetExamSubjectConfig(
+        campus: Campus,
+        examId: String,
+        examName: String,
+        classId: String,
+        className: String,
+        subject: Subject,
+        actorName: String,
+        actorEmail: String,
+        actorRole: StaffRole
+    ): Result<Unit> {
+        val configId = deterministicSubjectConfigId(examId, subject.id)
+        val ref = campusDoc(campus.id).collection("exam_subject_configs").document(configId)
+        return try {
+            requireUserId()
+            val snap = ref.get().await()
+            if (snap.exists()) {
+                ref.delete().await()
+            }
+            logActivity(
+                campus = campus,
+                actorName = actorName,
+                actorEmail = actorEmail,
+                actorRole = actorRole,
+                actionType = "TOTAL_MARKS_UPDATED",
+                summary = "Reset ${subject.name} total marks in ${examName.ifBlank { "Exam" }} to default",
+                classId = classId,
+                className = className,
+                subjectName = subject.name,
+                examName = examName,
+                studentName = ""
+            )
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, ref.path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun logActivity(
+        campus: Campus,
+        actorName: String,
+        actorEmail: String,
+        actorRole: StaffRole,
+        actionType: String,
+        summary: String,
+        classId: String = "",
+        className: String = "",
+        subjectName: String = "",
+        examName: String = "",
+        studentName: String = ""
+    ) {
+        runCatching {
+            val uid = requireUserId()
+            val cleanName = actorName.trim().ifBlank {
+                auth.currentUser?.displayName?.takeIf { it.isNotBlank() }
+                    ?: auth.currentUser?.email?.substringBefore("@")
+                    ?: "Staff Member"
+            }.take(100)
+            val cleanEmail = actorEmail.trim().ifBlank { auth.currentUser?.email.orEmpty() }.take(120)
+            val logId = shortId("act")
+            campusDoc(campus.id).collection("activity_logs").document(logId).set(
+                mapOf(
+                    "ownerId" to campus.ownerId,
+                    "memberUids" to campus.memberUids,
+                    "actorUid" to uid,
+                    "actorName" to cleanName,
+                    "actorEmail" to cleanEmail,
+                    "actorRole" to actorRole.name,
+                    "actionType" to actionType,
+                    "summary" to summary.trim().take(300),
+                    "classId" to classId.take(128),
+                    "className" to className.take(80),
+                    "subjectName" to subjectName.take(80),
+                    "examName" to examName.take(80),
+                    "studentName" to studentName.take(100),
+                    "createdAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
         }
     }
 
@@ -1321,7 +1517,8 @@ class SchoolRepository(
     ) {
         val collections = listOf(
             "staff", "sessions", "examinations", "classes", "sections",
-            "subjects", "students", "marks", "grading_rules", "result_records"
+            "subjects", "students", "marks", "grading_rules", "result_records",
+            "exam_subject_configs", "activity_logs"
         )
         val targetSet = memberUids.toSet()
         val docRefsWithCollection = mutableListOf<Pair<String, com.google.firebase.firestore.DocumentReference>>()
@@ -1343,14 +1540,20 @@ class SchoolRepository(
         docRefsWithCollection.chunked(400).forEach { chunk ->
             val batch = db.batch()
             chunk.forEach { (colName, docRef) ->
-                val updates = mutableMapOf<String, Any>(
-                    "memberUids" to memberUids,
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-                if (colName == "marks") {
-                    updates["enteredByUid"] = adminUid
+                if (colName == "activity_logs") {
+                    batch.update(docRef, mapOf("memberUids" to memberUids))
+                } else {
+                    val updates = mutableMapOf<String, Any>(
+                        "memberUids" to memberUids,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                    if (colName == "marks") {
+                        updates["enteredByUid"] = adminUid
+                    } else if (colName == "exam_subject_configs") {
+                        updates["updatedByUid"] = adminUid
+                    }
+                    batch.update(docRef, updates)
                 }
-                batch.update(docRef, updates)
             }
             batch.commit().await()
         }

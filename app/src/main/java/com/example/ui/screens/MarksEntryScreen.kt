@@ -32,9 +32,11 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.TableRows
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.ViewCarousel
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -68,6 +70,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.data.model.ExamComponent
+import com.example.data.model.ExamSubjectConfig
 import com.example.data.model.Examination
 import com.example.data.model.MarkEntry
 import com.example.data.model.StaffRole
@@ -92,9 +95,6 @@ fun MarksEntryScreen(
     onNavigateBack: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    val examComponents = snapshot.selectedExam?.components ?: emptyList()
-    val manualComponents = remember(examComponents) { examComponents.filter { !it.isCarryForward() } }
-    val linkedComponents = remember(examComponents) { examComponents.filter { it.isCarryForward() } }
     val allExamsById = remember(snapshot.examinations) { snapshot.examinations.associateBy { it.id } }
     val allSessionMarksByKey = remember(snapshot.sessionMarks) {
         snapshot.sessionMarks.associateBy { "${it.examId}_${it.studentId}_${it.subjectId}" }
@@ -117,11 +117,31 @@ fun MarksEntryScreen(
     }
 
     val selectedSubject: Subject? = subjectsForClass.firstOrNull { it.id == selectedSubjectId }
-    val effectiveMaxMarks = remember(selectedSubject, snapshot.selectedExam) {
-        selectedSubject?.let { ResultCalculator.effectiveSubjectMaxMarks(it, snapshot.selectedExam) } ?: 100.0
+    val activeSubjectConfig: ExamSubjectConfig? = remember(
+        snapshot.selectedExamId, selectedSubjectId, snapshot.examSubjectConfigsByKey
+    ) {
+        if (snapshot.selectedExamId.isNotBlank() && selectedSubjectId.isNotBlank()) {
+            snapshot.examSubjectConfigsByKey["${snapshot.selectedExamId}_${selectedSubjectId}"]
+        } else {
+            null
+        }
     }
-    val effectivePassMarks = remember(selectedSubject, snapshot.selectedExam) {
-        selectedSubject?.let { ResultCalculator.effectiveSubjectPassingMarks(it, snapshot.selectedExam) } ?: 40.0
+    val examComponents = remember(selectedSubject, snapshot.selectedExam, snapshot.examSubjectConfigsByKey) {
+        selectedSubject?.let {
+            ResultCalculator.effectiveComponentsForSubject(it, snapshot.selectedExam, snapshot.examSubjectConfigsByKey)
+        } ?: snapshot.selectedExam?.components.orEmpty()
+    }
+    val manualComponents = remember(examComponents) { examComponents.filter { !it.isCarryForward() } }
+    val linkedComponents = remember(examComponents) { examComponents.filter { it.isCarryForward() } }
+    val effectiveMaxMarks = remember(selectedSubject, snapshot.selectedExam, snapshot.examSubjectConfigsByKey) {
+        selectedSubject?.let {
+            ResultCalculator.effectiveSubjectMaxMarks(it, snapshot.selectedExam, snapshot.examSubjectConfigsByKey)
+        } ?: 100.0
+    }
+    val effectivePassMarks = remember(selectedSubject, snapshot.selectedExam, snapshot.examSubjectConfigsByKey) {
+        selectedSubject?.let {
+            ResultCalculator.effectiveSubjectPassingMarks(it, snapshot.selectedExam, snapshot.examSubjectConfigsByKey)
+        } ?: 40.0
     }
     val studentsInSection = remember(
         snapshot.visibleStudents, selectedClassId, selectedSectionId, snapshot.selectedSessionId
@@ -147,7 +167,7 @@ fun MarksEntryScreen(
     val currentStudent = studentsInSection.getOrNull(clampedIndex)
     val existingMark = currentStudent?.let { marksByStudentId[it.id] }
     val currentCarryForwardMarks = remember(
-        currentStudent?.id, selectedSubject?.id, snapshot.selectedExam, allExamsById, allSessionMarksByKey
+        currentStudent?.id, selectedSubject?.id, snapshot.selectedExam, allExamsById, allSessionMarksByKey, snapshot.examSubjectConfigsByKey
     ) {
         if (currentStudent != null && selectedSubject != null && linkedComponents.isNotEmpty()) {
             ResultCalculator.resolveCarryForwardComponentMarks(
@@ -155,7 +175,8 @@ fun MarksEntryScreen(
                 subject = selectedSubject,
                 examination = snapshot.selectedExam,
                 allExaminationsById = allExamsById,
-                allSessionMarksByKey = allSessionMarksByKey
+                allSessionMarksByKey = allSessionMarksByKey,
+                subjectConfigsByKey = snapshot.examSubjectConfigsByKey
             )
         } else {
             emptyMap()
@@ -196,6 +217,7 @@ fun MarksEntryScreen(
     var pendingNavigationAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var editingExam by remember { mutableStateOf<Examination?>(null) }
     var showCreateExamDialog by remember { mutableStateOf(false) }
+    var showEditSubjectTotalDialog by remember { mutableStateOf(false) }
 
     fun guardUnsaved(action: () -> Unit) {
         if (hasUnsavedChanges) {
@@ -298,7 +320,12 @@ fun MarksEntryScreen(
                 obtainedMarks = obtained,
                 existingMark = existingMark,
                 componentMarks = compMap,
-                maxAllowedMarks = maxAllowed
+                maxAllowedMarks = maxAllowed,
+                actorName = snapshot.currentActorName,
+                actorEmail = snapshot.currentActorEmail,
+                actorRole = snapshot.effectiveRole,
+                className = snapshot.classesById[selectedClassId]?.name.orEmpty(),
+                examName = snapshot.selectedExam?.name.orEmpty()
             )
             isSaving = false
             res.onSuccess {
@@ -372,35 +399,79 @@ fun MarksEntryScreen(
                 SelectorDropdown(
                     label = "Subject",
                     selectedText = selectedSubject?.let {
-                        val effMax = ResultCalculator.effectiveSubjectMaxMarks(it, snapshot.selectedExam)
-                        "${it.name} (Exam Max: ${ResultCalculator.formatMarks(effMax)})"
+                        val effMax = ResultCalculator.effectiveSubjectMaxMarks(it, snapshot.selectedExam, snapshot.examSubjectConfigsByKey)
+                        "${it.name} (Total: ${ResultCalculator.formatMarks(effMax)})"
                     } ?: "No Subjects",
                     items = subjectsForClass,
                     itemLabel = {
-                        val effMax = ResultCalculator.effectiveSubjectMaxMarks(it, snapshot.selectedExam)
-                        "${it.name} (Max: ${ResultCalculator.formatMarks(effMax)})"
+                        val effMax = ResultCalculator.effectiveSubjectMaxMarks(it, snapshot.selectedExam, snapshot.examSubjectConfigsByKey)
+                        "${it.name} (Total: ${ResultCalculator.formatMarks(effMax)})"
                     },
                     onSelect = { guardUnsaved { selectedSubjectId = it.id } }
                 )
-                if (examComponents.isNotEmpty()) {
+                if (selectedSubject != null && snapshot.selectedExam != null) {
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(12.dp),
                         color = EducatorsBlueSurface,
+                        border = BorderStroke(1.dp, EducatorsBlue.copy(alpha = 0.25f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        val partsSummary = examComponents.joinToString(" + ") { comp ->
-                            if (comp.isCarryForward()) {
-                                "${comp.name} [${ResultCalculator.formatMarks(comp.maxMarks)} Auto]"
-                            } else {
-                                "${comp.name} (${ResultCalculator.formatMarks(comp.maxMarks)})"
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = "${selectedSubject.name} • Total: ${ResultCalculator.formatMarks(effectiveMaxMarks)}",
+                                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = EducatorsNavy
+                                        )
+                                        if (activeSubjectConfig != null) {
+                                            StatusPill(text = "Custom", isPositive = true)
+                                        }
+                                    }
+                                    Text(
+                                        text = "Passing (40%): ${ResultCalculator.formatMarks(effectivePassMarks)} • ${snapshot.selectedExam.name}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                OutlinedButton(
+                                    onClick = { showEditSubjectTotalDialog = true },
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier
+                                        .heightIn(min = 42.dp)
+                                        .testTag("edit_subject_total_marks_btn")
+                                ) {
+                                    Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Edit Total Marks")
+                                }
+                            }
+                            if (examComponents.isNotEmpty()) {
+                                val partsSummary = examComponents.joinToString(" + ") { comp ->
+                                    if (comp.isCarryForward()) {
+                                        "${comp.name} [${ResultCalculator.formatMarks(comp.maxMarks)} Auto]"
+                                    } else {
+                                        "${comp.name} (${ResultCalculator.formatMarks(comp.maxMarks)})"
+                                    }
+                                }
+                                Text(
+                                    text = "Parts: $partsSummary",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = EducatorsBlue
+                                )
                             }
                         }
-                        Text(
-                            text = "Exam Parts (Total ${ResultCalculator.formatMarks(effectiveMaxMarks)} • Pass 40% = ${ResultCalculator.formatMarks(effectivePassMarks)}): $partsSummary",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                            color = EducatorsNavy,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                        )
                     }
                 }
             }
@@ -429,7 +500,9 @@ fun MarksEntryScreen(
         }
 
         if (snapshot.visibleClasses.isEmpty()) {
-            val sharedCampus = snapshot.accessibleCampuses.firstOrNull { it.id != snapshot.campus.id }
+            val sharedCampus = snapshot.accessibleCampuses.firstOrNull {
+                it.id != snapshot.campus.id && it.ownerId != viewModel.currentUserId
+            }
             EmptyStateCard(
                 icon = Icons.Default.Edit,
                 title = if (sharedCampus != null) {
@@ -1013,6 +1086,266 @@ fun MarksEntryScreen(
             }
         )
     }
+
+    if (showEditSubjectTotalDialog && selectedSubject != null && snapshot.selectedExam != null) {
+        SubjectExamMarksEditorDialog(
+            subject = selectedSubject,
+            className = snapshot.classesById[selectedClassId]?.name.orEmpty(),
+            examination = snapshot.selectedExam,
+            effectiveComponents = examComponents,
+            currentEffectiveMaxMarks = effectiveMaxMarks,
+            hasCustomOverride = activeSubjectConfig != null,
+            onDismiss = { showEditSubjectTotalDialog = false },
+            onSave = { newTotalMax, newCompMap ->
+                viewModel.saveExamSubjectConfig(
+                    campus = snapshot.campus,
+                    examId = snapshot.selectedExam.id,
+                    examName = snapshot.selectedExam.name,
+                    classId = selectedClassId,
+                    className = snapshot.classesById[selectedClassId]?.name.orEmpty(),
+                    subject = selectedSubject,
+                    totalMaxMarks = newTotalMax,
+                    componentMaxMarks = newCompMap,
+                    actorName = snapshot.currentActorName,
+                    actorEmail = snapshot.currentActorEmail,
+                    actorRole = snapshot.effectiveRole
+                )
+                showEditSubjectTotalDialog = false
+            },
+            onReset = {
+                viewModel.resetExamSubjectConfig(
+                    campus = snapshot.campus,
+                    examId = snapshot.selectedExam.id,
+                    examName = snapshot.selectedExam.name,
+                    classId = selectedClassId,
+                    className = snapshot.classesById[selectedClassId]?.name.orEmpty(),
+                    subject = selectedSubject,
+                    actorName = snapshot.currentActorName,
+                    actorEmail = snapshot.currentActorEmail,
+                    actorRole = snapshot.effectiveRole
+                )
+                showEditSubjectTotalDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun SubjectExamMarksEditorDialog(
+    subject: Subject,
+    className: String,
+    examination: Examination,
+    effectiveComponents: List<ExamComponent>,
+    currentEffectiveMaxMarks: Double,
+    hasCustomOverride: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (totalMaxMarks: Double, componentMaxMarks: Map<String, Double>) -> Unit,
+    onReset: () -> Unit
+) {
+    val manualParts = remember(effectiveComponents) { effectiveComponents.filter { !it.isCarryForward() } }
+    val linkedParts = remember(effectiveComponents) { effectiveComponents.filter { it.isCarryForward() } }
+    val hasComponents = effectiveComponents.isNotEmpty()
+
+    var totalText by remember(subject.id, examination.id, currentEffectiveMaxMarks) {
+        mutableStateOf(ResultCalculator.formatMarks(currentEffectiveMaxMarks))
+    }
+    val compTexts = remember(subject.id, examination.id, effectiveComponents) {
+        mutableStateMapOf<String, String>().apply {
+            effectiveComponents.forEach { comp ->
+                put(comp.id, ResultCalculator.formatMarks(comp.maxMarks))
+            }
+        }
+    }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+
+    val previewTotal: Double = if (!hasComponents) {
+        totalText.trim().toDoubleOrNull() ?: 0.0
+    } else {
+        effectiveComponents.sumOf { comp ->
+            if (comp.isCarryForward()) {
+                comp.maxMarks
+            } else {
+                compTexts[comp.id]?.trim()?.toDoubleOrNull() ?: 0.0
+            }
+        }
+    }
+    val previewPass = kotlin.math.round((previewTotal * 0.40) * 100.0) / 100.0
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text("Edit Assessment Total Marks", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    text = "${subject.name} • $className • ${examination.name}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = EducatorsBlue
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = if (hasComponents) {
+                        "Set custom maximum marks for each assessment / quiz part of ${subject.name} in ${examination.name}. Other subjects remain unaffected."
+                    } else {
+                        "Set custom total marks for ${subject.name} in ${examination.name} (default: ${ResultCalculator.formatMarks(subject.maxMarks)}). Passing is automatically set to 40%."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                if (!hasComponents) {
+                    OutlinedTextField(
+                        value = totalText,
+                        onValueChange = {
+                            totalText = it
+                            errorMsg = null
+                        },
+                        label = { Text("Total Marks for ${subject.name}") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("subject_total_marks_input")
+                    )
+                } else {
+                    if (linkedParts.isNotEmpty()) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = EmeraldPassContainer.copy(alpha = 0.65f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = "Carried Forward From Previous Terms (Locked)",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = EmeraldPass
+                                )
+                                linkedParts.forEach { comp ->
+                                    Text(
+                                        text = "${comp.name}: ${ResultCalculator.formatMarks(comp.maxMarks)} marks (auto-calculated)",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = EducatorsNavy
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    manualParts.forEach { comp ->
+                        OutlinedTextField(
+                            value = compTexts[comp.id].orEmpty(),
+                            onValueChange = {
+                                compTexts[comp.id] = it
+                                errorMsg = null
+                            },
+                            label = { Text("${comp.name} — Max Marks") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("subject_comp_max_${comp.id}")
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = EducatorsBlueSurface,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("Subject Total Marks", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                text = ResultCalculator.formatMarks(previewTotal),
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = EducatorsNavy
+                            )
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("Passing Marks (40%)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                text = ResultCalculator.formatMarks(previewPass),
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = EmeraldPass
+                            )
+                        }
+                    }
+                }
+
+                if (errorMsg != null) {
+                    Text(
+                        text = errorMsg ?: "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = CrimsonFail
+                    )
+                }
+
+                if (hasCustomOverride) {
+                    TextButton(
+                        onClick = onReset,
+                        modifier = Modifier
+                            .align(Alignment.Start)
+                            .testTag("reset_subject_total_marks_btn")
+                    ) {
+                        Icon(Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Reset to Default Marks")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (!hasComponents) {
+                        val parsed = totalText.trim().toDoubleOrNull()
+                        if (parsed == null || parsed <= 0.0 || parsed > 1000.0) {
+                            errorMsg = "Enter a valid total between 1 and 1000."
+                            return@Button
+                        }
+                        onSave(parsed, emptyMap())
+                    } else {
+                        val outMap = linkedMapOf<String, Double>()
+                        linkedParts.forEach { outMap[it.id] = it.maxMarks }
+                        for (comp in manualParts) {
+                            val parsed = compTexts[comp.id]?.trim()?.toDoubleOrNull()
+                            if (parsed == null || parsed <= 0.0 || parsed > 1000.0) {
+                                errorMsg = "Enter a valid max marks value for ${comp.name}."
+                                return@Button
+                            }
+                            outMap[comp.id] = parsed
+                        }
+                        val sumTotal = outMap.values.sum()
+                        if (sumTotal <= 0.0 || sumTotal > 1000.0) {
+                            errorMsg = "Combined total must be between 1 and 1000."
+                            return@Button
+                        }
+                        onSave(sumTotal, outMap)
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = EducatorsNavy),
+                modifier = Modifier.testTag("save_subject_total_marks_btn")
+            ) {
+                Text("Save Total Marks")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable
@@ -1031,8 +1364,8 @@ private fun TableMarksEntrySection(
     val allSessionMarksByKey = remember(snapshot.sessionMarks) {
         snapshot.sessionMarks.associateBy { "${it.examId}_${it.studentId}_${it.subjectId}" }
     }
-    val effectiveMaxMarks = remember(subject, snapshot.selectedExam) {
-        ResultCalculator.effectiveSubjectMaxMarks(subject, snapshot.selectedExam)
+    val effectiveMaxMarks = remember(subject, snapshot.selectedExam, snapshot.examSubjectConfigsByKey) {
+        ResultCalculator.effectiveSubjectMaxMarks(subject, snapshot.selectedExam, snapshot.examSubjectConfigsByKey)
     }
 
     val draftValues = remember(students, subject.id, marksByStudentId) {
@@ -1081,7 +1414,12 @@ private fun TableMarksEntrySection(
                                             subject = subject,
                                             obtainedMarks = num,
                                             existingMark = marksByStudentId[st.id],
-                                            maxAllowedMarks = effectiveMaxMarks
+                                            maxAllowedMarks = effectiveMaxMarks,
+                                            actorName = snapshot.currentActorName,
+                                            actorEmail = snapshot.currentActorEmail,
+                                            actorRole = snapshot.effectiveRole,
+                                            className = snapshot.classesById[st.classId]?.name.orEmpty(),
+                                            examName = snapshot.selectedExam?.name.orEmpty()
                                         )
                                         if (res.isSuccess) savedCount++ else errorCount++
                                     } else {
@@ -1112,7 +1450,8 @@ private fun TableMarksEntrySection(
                                             subject = subject,
                                             examination = snapshot.selectedExam,
                                             allExaminationsById = allExamsById,
-                                            allSessionMarksByKey = allSessionMarksByKey
+                                            allSessionMarksByKey = allSessionMarksByKey,
+                                            subjectConfigsByKey = snapshot.examSubjectConfigsByKey
                                         ).values.sum()
                                     } else {
                                         0.0
@@ -1128,7 +1467,12 @@ private fun TableMarksEntrySection(
                                             obtainedMarks = total,
                                             existingMark = marksByStudentId[st.id],
                                             componentMarks = parsedMap,
-                                            maxAllowedMarks = effectiveMaxMarks
+                                            maxAllowedMarks = effectiveMaxMarks,
+                                            actorName = snapshot.currentActorName,
+                                            actorEmail = snapshot.currentActorEmail,
+                                            actorRole = snapshot.effectiveRole,
+                                            className = snapshot.classesById[st.classId]?.name.orEmpty(),
+                                            examName = snapshot.selectedExam?.name.orEmpty()
                                         )
                                         if (res.isSuccess) savedCount++ else errorCount++
                                     } else {
@@ -1217,14 +1561,15 @@ private fun TableMarksEntrySection(
                     }
                 }
             } else {
-                val stuCarryMap = remember(st.id, subject.id, snapshot.selectedExam, allExamsById, allSessionMarksByKey) {
+                val stuCarryMap = remember(st.id, subject.id, snapshot.selectedExam, allExamsById, allSessionMarksByKey, snapshot.examSubjectConfigsByKey) {
                     if (linkedComponents.isNotEmpty()) {
                         ResultCalculator.resolveCarryForwardComponentMarks(
                             studentId = st.id,
                             subject = subject,
                             examination = snapshot.selectedExam,
                             allExaminationsById = allExamsById,
-                            allSessionMarksByKey = allSessionMarksByKey
+                            allSessionMarksByKey = allSessionMarksByKey,
+                            subjectConfigsByKey = snapshot.examSubjectConfigsByKey
                         )
                     } else {
                         emptyMap()

@@ -268,6 +268,43 @@ data class ResultRecord(
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
+@Keep
+@IgnoreExtraProperties
+data class ExamSubjectConfig(
+    @DocumentId val id: String = "",
+    val ownerId: String = "",
+    val memberUids: List<String> = emptyList(),
+    val examId: String = "",
+    val classId: String = "",
+    val subjectId: String = "",
+    val totalMaxMarks: Double = 0.0,
+    val componentMaxMarks: Map<String, Double> = emptyMap(),
+    val updatedByUid: String = "",
+    val updatedByName: String = "",
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+)
+
+@Keep
+@IgnoreExtraProperties
+data class ActivityLog(
+    @DocumentId val id: String = "",
+    val ownerId: String = "",
+    val memberUids: List<String> = emptyList(),
+    val actorUid: String = "",
+    val actorName: String = "",
+    val actorEmail: String = "",
+    val actorRole: String = StaffRole.TEACHER.name,
+    val actionType: String = "MARKS_SAVED",
+    val summary: String = "",
+    val classId: String = "",
+    val className: String = "",
+    val subjectName: String = "",
+    val examName: String = "",
+    val studentName: String = "",
+    @ServerTimestamp val createdAt: Timestamp? = null
+)
+
 // Computed Domain Models for UI, PDF & Excel
 
 data class SubjectResult(
@@ -282,7 +319,8 @@ data class SubjectResult(
     val entered: Boolean,
     val effectiveMaxMarks: Double = subject.maxMarks,
     val effectivePassingMarks: Double = (effectiveMaxMarks * 0.40),
-    val resolvedComponentMarks: Map<String, Double> = markEntry?.componentMarks ?: emptyMap()
+    val resolvedComponentMarks: Map<String, Double> = markEntry?.componentMarks ?: emptyMap(),
+    val effectiveComponents: List<ExamComponent> = emptyList()
 )
 
 data class StudentResultSummary(

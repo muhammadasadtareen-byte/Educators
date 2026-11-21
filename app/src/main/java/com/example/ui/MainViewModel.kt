@@ -4,10 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.firebase.SchoolRepository
 import com.example.data.model.AcademicSession
+import com.example.data.model.ActivityLog
 import com.example.data.model.Campus
 import com.example.data.model.ClassPerformanceStats
 import com.example.data.model.ClassSection
 import com.example.data.model.ExamComponent
+import com.example.data.model.ExamSubjectConfig
 import com.example.data.model.ExamType
 import com.example.data.model.Examination
 import com.example.data.model.GradingRule
@@ -63,11 +65,17 @@ data class SchoolSnapshot(
     val assignedClassIds: List<String>,
     val selectedSessionId: String,
     val selectedExamId: String,
-    val accessibleCampuses: List<Campus> = emptyList()
+    val accessibleCampuses: List<Campus> = emptyList(),
+    val examSubjectConfigs: List<ExamSubjectConfig> = emptyList(),
+    val activityLogs: List<ActivityLog> = emptyList(),
+    val currentActorName: String = "",
+    val currentActorEmail: String = ""
 ) {
     val classesById: Map<String, SchoolClass> = classes.associateBy { it.id }
     val sectionsById: Map<String, ClassSection> = sections.associateBy { it.id }
     val sessionsById: Map<String, AcademicSession> = sessions.associateBy { it.id }
+    val examSubjectConfigsByKey: Map<String, ExamSubjectConfig> =
+        examSubjectConfigs.associateBy { "${it.examId}_${it.subjectId}" }
     val selectedExam: Examination? = examinations.firstOrNull { it.id == selectedExamId } ?: examinations.firstOrNull()
     val selectedSession: AcademicSession? = sessions.firstOrNull { it.id == selectedSessionId } ?: sessions.firstOrNull()
 
@@ -107,7 +115,8 @@ data class SchoolSnapshot(
         examination = selectedExam,
         allGradingRules = gradingRules,
         allExaminations = examinations,
-        allSessionMarks = sessionMarks
+        allSessionMarks = sessionMarks,
+        examSubjectConfigs = examSubjectConfigs
     )
 
     val completedResultCount: Int = allStudentSummaries.count { it.status == ResultStatus.COMPLETE }
@@ -207,12 +216,20 @@ class MainViewModel(
             ControlBundle(records, sessOverride, examOverride, roleOverride, previewClasses)
         }
 
+        val extraFlow = combine(
+            repository.observeAccessibleCampuses(),
+            repository.observeExamSubjectConfigs(campusId).catch { emit(emptyList()) },
+            repository.observeActivityLogs(campusId).catch { emit(emptyList()) }
+        ) { accessibleCampuses, subjectConfigs, logs ->
+            ExtraBundle(accessibleCampuses, subjectConfigs, logs)
+        }
+
         return combine(
             coreFlow,
             academicFlow,
             controlsFlow,
-            repository.observeAccessibleCampuses()
-        ) { core, acad, ctrl, accessibleCampuses ->
+            extraFlow
+        ) { core, acad, ctrl, extra ->
             val campus = core.campus ?: Campus(id = campusId, ownerId = currentUserId, memberUids = listOf(currentUserId))
             val myStaff = core.staff.firstOrNull { it.userUid == currentUserId || it.id == currentUserId }
             val isOwnerOrAdmin = campus.ownerId == currentUserId || myStaff?.parsedRole() == StaffRole.ADMIN
@@ -235,6 +252,8 @@ class MainViewModel(
                 ?: core.exams.sortedBy { it.sortOrder }.firstOrNull()?.id
                 ?: ""
 
+            val sortedLogs = extra.activityLogs.sortedByDescending { it.createdAt?.seconds ?: 0L }
+
             SchoolSnapshot(
                 campus = campus,
                 staff = core.staff,
@@ -252,7 +271,11 @@ class MainViewModel(
                 assignedClassIds = assignedClasses,
                 selectedSessionId = sessId,
                 selectedExamId = examId,
-                accessibleCampuses = accessibleCampuses
+                accessibleCampuses = extra.accessibleCampuses,
+                examSubjectConfigs = extra.subjectConfigs,
+                activityLogs = sortedLogs,
+                currentActorName = myStaff?.displayName.orEmpty(),
+                currentActorEmail = myStaff?.email.orEmpty()
             )
         }
     }
@@ -463,7 +486,12 @@ class MainViewModel(
         obtainedMarks: Double,
         existingMark: MarkEntry?,
         componentMarks: Map<String, Double> = emptyMap(),
-        maxAllowedMarks: Double = subject.maxMarks
+        maxAllowedMarks: Double = subject.maxMarks,
+        actorName: String = "",
+        actorEmail: String = "",
+        actorRole: StaffRole = StaffRole.TEACHER,
+        className: String = "",
+        examName: String = ""
     ): Result<Unit> {
         return repository.saveMarkEntry(
             campus = campus,
@@ -474,7 +502,64 @@ class MainViewModel(
             obtainedMarks = obtainedMarks,
             existingMark = existingMark,
             componentMarks = componentMarks,
-            maxAllowedMarks = maxAllowedMarks
+            maxAllowedMarks = maxAllowedMarks,
+            actorName = actorName,
+            actorEmail = actorEmail,
+            actorRole = actorRole,
+            className = className,
+            examName = examName
+        )
+    }
+
+    fun saveExamSubjectConfig(
+        campus: Campus,
+        examId: String,
+        examName: String,
+        classId: String,
+        className: String,
+        subject: Subject,
+        totalMaxMarks: Double,
+        componentMaxMarks: Map<String, Double>,
+        actorName: String,
+        actorEmail: String,
+        actorRole: StaffRole
+    ) = runMutation("Updated ${subject.name} total marks for $examName.") {
+        repository.saveExamSubjectConfig(
+            campus = campus,
+            examId = examId,
+            examName = examName,
+            classId = classId,
+            className = className,
+            subject = subject,
+            totalMaxMarks = totalMaxMarks,
+            componentMaxMarks = componentMaxMarks,
+            actorName = actorName,
+            actorEmail = actorEmail,
+            actorRole = actorRole
+        )
+    }
+
+    fun resetExamSubjectConfig(
+        campus: Campus,
+        examId: String,
+        examName: String,
+        classId: String,
+        className: String,
+        subject: Subject,
+        actorName: String,
+        actorEmail: String,
+        actorRole: StaffRole
+    ) = runMutation("Reset ${subject.name} total marks to default.") {
+        repository.resetExamSubjectConfig(
+            campus = campus,
+            examId = examId,
+            examName = examName,
+            classId = classId,
+            className = className,
+            subject = subject,
+            actorName = actorName,
+            actorEmail = actorEmail,
+            actorRole = actorRole
         )
     }
 
@@ -581,5 +666,11 @@ class MainViewModel(
         val examOverride: String?,
         val roleOverride: StaffRole?,
         val previewClasses: List<String>
+    )
+
+    private data class ExtraBundle(
+        val accessibleCampuses: List<Campus>,
+        val subjectConfigs: List<ExamSubjectConfig>,
+        val activityLogs: List<ActivityLog>
     )
 }

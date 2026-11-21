@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Class
 import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PendingActions
 import androidx.compose.material.icons.filled.People
@@ -196,21 +197,21 @@ fun DashboardScreen(
             }
         }
 
-        // Shared School Portal Banner (auto-surfaces invited campus for teachers)
-        val otherCampuses = snapshot.accessibleCampuses.filter { it.id != snapshot.campus.id }
-        val invitedOther = otherCampuses.firstOrNull { it.ownerId != currentUserId } ?: otherCampuses.firstOrNull()
-        if (invitedOther != null) {
+        // Shared School Portal Banner: ONLY show when user is currently in their personal campus
+        // and has been invited to a shared school campus. Never show "Personal Workspace Available"
+        // (Admin portal) to a Teacher on their shared school portal.
+        val isOnPersonalCampus = snapshot.campus.ownerId == currentUserId
+        val invitedSharedCampus = if (isOnPersonalCampus) {
+            snapshot.accessibleCampuses.firstOrNull { it.id != snapshot.campus.id && it.ownerId != currentUserId }
+        } else {
+            null
+        }
+        if (invitedSharedCampus != null) {
             item {
-                val isSwitchingToShared = invitedOther.ownerId != currentUserId
                 Card(
                     shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isSwitchingToShared) EmeraldPassContainer else EducatorsBlueSurface
-                    ),
-                    border = BorderStroke(
-                        1.dp,
-                        if (isSwitchingToShared) EmeraldPass.copy(alpha = 0.5f) else EducatorsBlue.copy(alpha = 0.4f)
-                    ),
+                    colors = CardDefaults.cardColors(containerColor = EmeraldPassContainer),
+                    border = BorderStroke(1.dp, EmeraldPass.copy(alpha = 0.5f)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -222,12 +223,12 @@ fun DashboardScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = if (isSwitchingToShared) "Shared School Portal Available" else "Personal Workspace Available",
+                                text = "Shared School Portal Available",
                                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                                 color = EducatorsNavy
                             )
                             Text(
-                                text = "${invitedOther.schoolName} — ${invitedOther.campusName}",
+                                text = "${invitedSharedCampus.schoolName} — ${invitedSharedCampus.campusName}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -236,13 +237,11 @@ fun DashboardScreen(
                         Button(
                             onClick = {
                                 onSwitchCampus(
-                                    invitedOther.id,
-                                    "${invitedOther.schoolName} (${invitedOther.campusName})"
+                                    invitedSharedCampus.id,
+                                    "${invitedSharedCampus.schoolName} (${invitedSharedCampus.campusName})"
                                 )
                             },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isSwitchingToShared) EmeraldPass else EducatorsBlue
-                            ),
+                            colors = ButtonDefaults.buttonColors(containerColor = EmeraldPass),
                             modifier = Modifier
                                 .heightIn(min = 48.dp)
                                 .testTag("dashboard_switch_campus_btn")
@@ -281,40 +280,46 @@ fun DashboardScreen(
         }
 
         // 5 Core KPI Metrics
+        val isAdminRole = snapshot.effectiveRole == StaffRole.ADMIN
+        val visibleSubjectCount = if (isAdminRole) {
+            snapshot.subjects.size
+        } else {
+            snapshot.subjects.count { it.classId in snapshot.assignedClassIds }
+        }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     StatMetricCard(
-                        title = "Total Students",
+                        title = if (isAdminRole) "Total Students" else "Assigned Students",
                         value = snapshot.visibleStudents.size.toString(),
                         subtitle = "Active session",
                         icon = Icons.Default.People,
                         accentColor = EducatorsBlue,
                         containerColor = EducatorsBlueSurface,
                         modifier = Modifier.weight(1f),
-                        onClick = { onNavigate(AppRoute.STUDENTS) }
+                        onClick = if (isAdminRole) ({ onNavigate(AppRoute.STUDENTS) }) else ({ onNavigate(AppRoute.MARKS_ENTRY) })
                     )
                     StatMetricCard(
-                        title = "Total Classes",
+                        title = if (isAdminRole) "Total Classes" else "Assigned Classes",
                         value = snapshot.visibleClasses.size.toString(),
-                        subtitle = "${snapshot.sections.size} sections",
+                        subtitle = if (isAdminRole) "${snapshot.sections.size} sections" else "Assigned to you",
                         icon = Icons.Default.Class,
                         accentColor = EducatorsNavy,
                         containerColor = EducatorsBlueSurface,
                         modifier = Modifier.weight(1f),
-                        onClick = { onNavigate(AppRoute.CLASSES) }
+                        onClick = if (isAdminRole) ({ onNavigate(AppRoute.CLASSES) }) else ({ onNavigate(AppRoute.MARKS_ENTRY) })
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     StatMetricCard(
-                        title = "Total Subjects",
-                        value = snapshot.subjects.size.toString(),
-                        subtitle = "Configured",
+                        title = if (isAdminRole) "Total Subjects" else "Assigned Subjects",
+                        value = visibleSubjectCount.toString(),
+                        subtitle = if (isAdminRole) "Configured" else "Editable total marks",
                         icon = Icons.Default.MenuBook,
                         accentColor = EducatorsBlue,
                         containerColor = EducatorsBlueSurface,
                         modifier = Modifier.weight(1f),
-                        onClick = { onNavigate(AppRoute.SUBJECTS) }
+                        onClick = if (isAdminRole) ({ onNavigate(AppRoute.SUBJECTS) }) else ({ onNavigate(AppRoute.MARKS_ENTRY) })
                     )
                     StatMetricCard(
                         title = "Results Completed",
@@ -353,14 +358,15 @@ fun DashboardScreen(
                 add(Triple("Marks Entry", Icons.Default.EditNote, AppRoute.MARKS_ENTRY))
                 add(Triple("Result Cards", Icons.Default.Badge, AppRoute.RESULT_CARDS))
                 add(Triple("Class Results", Icons.Default.Assessment, AppRoute.CLASS_RESULTS))
-                if (snapshot.effectiveRole == StaffRole.ADMIN) {
+                if (isAdminRole) {
                     add(Triple("Students", Icons.Default.People, AppRoute.STUDENTS))
                     add(Triple("Classes", Icons.Default.Class, AppRoute.CLASSES))
                     add(Triple("Subjects", Icons.Default.MenuBook, AppRoute.SUBJECTS))
+                    add(Triple("Activity Log", Icons.Default.History, AppRoute.TEACHER_ACTIVITY))
                 }
                 add(Triple("Excel Export", Icons.Default.TableChart, AppRoute.EXCEL_CENTER))
                 add(Triple("PDF Export", Icons.Default.PictureAsPdf, AppRoute.PDF_CENTER))
-                if (snapshot.effectiveRole == StaffRole.ADMIN || snapshot.isOwnerOrAdmin) {
+                if (isAdminRole) {
                     add(Triple("Settings", Icons.Default.Settings, AppRoute.SETTINGS))
                 }
             }
@@ -380,6 +386,109 @@ fun DashboardScreen(
                         }
                         repeat(3 - rowItems.size) {
                             Spacer(Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+        }
+
+        // Admin-only Recent Teacher Activity Preview
+        if (isAdminRole) {
+            item {
+                val recentLogs = snapshot.activityLogs.take(4)
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.History,
+                                    contentDescription = null,
+                                    tint = EducatorsBlue,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = "Recent Teacher Activity",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = EducatorsNavy
+                                )
+                            }
+                            StatusPill(
+                                text = "${snapshot.activityLogs.size} Logged",
+                                isPositive = snapshot.activityLogs.isNotEmpty(),
+                                isWarning = snapshot.activityLogs.isEmpty()
+                            )
+                        }
+
+                        if (recentLogs.isEmpty()) {
+                            Text(
+                                text = "No teacher activity recorded yet. Marks entered and subject total marks edited by teachers will appear here live.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            recentLogs.forEach { log ->
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = MaterialTheme.colorScheme.background,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "${log.actorName.ifBlank { "Staff" }} (${log.actorRole})",
+                                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                                color = EducatorsNavy
+                                            )
+                                            Text(
+                                                text = formatActivityTime(log),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Text(
+                                            text = log.summary,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = { onNavigate(AppRoute.TEACHER_ACTIVITY) },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .testTag("dashboard_teacher_activity_btn")
+                        ) {
+                            Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Open Teacher Activity Monitor")
                         }
                     }
                 }

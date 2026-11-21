@@ -188,7 +188,7 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
                         Icon(Icons.Default.CloudDone, contentDescription = null, tint = EducatorsBlue)
                         Spacer(Modifier.width(10.dp))
                         Text(
-                            text = "Cloud Firestore Sync & Role-Based Staff Access (Administrator / Teacher)",
+                            text = "Cloud Firestore Sync for School Staff & Result Management",
                             style = MaterialTheme.typography.bodySmall,
                             color = EducatorsNavy
                         )
@@ -321,7 +321,7 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            text = "Authorized Campus Administrators & Teachers",
+                            text = "Sign in with your assigned Google Account",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

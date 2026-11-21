@@ -695,6 +695,118 @@ class ResultSystemUnitTest {
         assertEquals("A", compositeSummary.overallGrade)
     }
 
+    @Test
+    fun `teacher per-subject total marks and component overrides recalculate percentages 40 percent pass and final exam carry-forward`() {
+        // Case 1: Single-mark exam where Teacher sets Math total = 50 and Islamiat total = 25 (defaults were 100 and 50)
+        val stu = Student(id = "s_ov", name = "Zainab", classId = "cls_5", sectionId = "sec_a", sessionId = "sess_1")
+        val singleConfigs = listOf(
+            com.example.data.model.ExamSubjectConfig(
+                id = "exam_mid_sub_math",
+                examId = "exam_mid",
+                classId = "cls_5",
+                subjectId = "sub_math",
+                totalMaxMarks = 50.0
+            ),
+            com.example.data.model.ExamSubjectConfig(
+                id = "exam_mid_sub_isl",
+                examId = "exam_mid",
+                classId = "cls_5",
+                subjectId = "sub_isl",
+                totalMaxMarks = 25.0
+            )
+        )
+        // Math: 20/50 = 40% (PASS), Islamiat: 20/25 = 80% (PASS) -> Total 40/75 = 53.33% (Grade C)
+        val singleMarks = listOf(
+            MarkEntry(id = "m1", examId = "exam_mid", classId = "cls_5", studentId = "s_ov", subjectId = "sub_math", obtainedMarks = 20.0),
+            MarkEntry(id = "m2", examId = "exam_mid", classId = "cls_5", studentId = "s_ov", subjectId = "sub_isl", obtainedMarks = 20.0)
+        )
+        val singleSummary = ResultCalculator.computeClassResults(
+            students = listOf(stu),
+            subjects = listOf(math, islamiat),
+            marks = singleMarks,
+            resultRecords = emptyList(),
+            classesById = mapOf(schoolClass.id to schoolClass),
+            sectionsById = mapOf(sectionA.id to sectionA),
+            sessionsById = mapOf(session.id to session),
+            examination = defaultExam,
+            allGradingRules = ResultCalculator.defaultGradingTemplates(),
+            allExaminations = listOf(defaultExam),
+            allSessionMarks = singleMarks,
+            examSubjectConfigs = singleConfigs
+        ).first()
+
+        assertEquals(75.0, singleSummary.totalMaxMarks, 0.001)
+        assertEquals(40.0, singleSummary.totalObtainedMarks, 0.001)
+        assertEquals(53.33, singleSummary.overallPercentage, 0.05)
+        assertTrue(singleSummary.passed)
+        assertEquals(20.0, singleSummary.subjectResults.first { it.subject.id == "sub_math" }.effectivePassingMarks, 0.001)
+        assertEquals(10.0, singleSummary.subjectResults.first { it.subject.id == "sub_isl" }.effectivePassingMarks, 0.001)
+
+        // Case 2: Multi-component Term 1 where Teacher customizes Math Quiz(15)+Assess(25)=40,
+        // while Islamiat keeps Quiz(10)+Assess(15)=25, AND Final Exam carries 20% of Term 1!
+        val term1 = Examination(
+            id = "exam_t1",
+            sessionId = "sess_1",
+            name = "Term 1",
+            examType = ExamType.MONTHLY_TEST.name,
+            components = listOf(
+                com.example.data.model.ExamComponent("q", "Quiz", 10.0),
+                com.example.data.model.ExamComponent("a", "Assessment", 15.0)
+            )
+        )
+        val finalExam = Examination(
+            id = "exam_fin",
+            sessionId = "sess_1",
+            name = "Final Exam",
+            examType = ExamType.FINAL_TERM.name,
+            components = listOf(
+                com.example.data.model.ExamComponent("cf_t1", "Term 1 (20%)", 20.0, sourceExamId = "exam_t1", weightPercentage = 20.0),
+                com.example.data.model.ExamComponent("paper", "Final Paper", 80.0)
+            )
+        )
+        val compConfigs = listOf(
+            com.example.data.model.ExamSubjectConfig(
+                id = "exam_t1_sub_math",
+                examId = "exam_t1",
+                classId = "cls_5",
+                subjectId = "sub_math",
+                totalMaxMarks = 40.0,
+                componentMaxMarks = mapOf("q" to 15.0, "a" to 25.0)
+            )
+        )
+        // Term 1 Math: 30/40 = 75% -> 20% carried into Final = 15.0 marks + Paper 65/80 = 80/100 (Grade A)
+        // Term 1 Islamiat: 20/25 = 80% -> 20% carried into Final = 16.0 marks + Paper 64/80 = 80/100 (Grade A)
+        val sessionMarks = listOf(
+            MarkEntry(id = "mt1_m", examId = "exam_t1", classId = "cls_5", studentId = "s_ov", subjectId = "sub_math", obtainedMarks = 30.0, componentMarks = mapOf("q" to 10.0, "a" to 20.0)),
+            MarkEntry(id = "mt1_i", examId = "exam_t1", classId = "cls_5", studentId = "s_ov", subjectId = "sub_isl", obtainedMarks = 20.0, componentMarks = mapOf("q" to 8.0, "a" to 12.0)),
+            MarkEntry(id = "mf_m", examId = "exam_fin", classId = "cls_5", studentId = "s_ov", subjectId = "sub_math", obtainedMarks = 80.0, componentMarks = mapOf("paper" to 65.0)),
+            MarkEntry(id = "mf_i", examId = "exam_fin", classId = "cls_5", studentId = "s_ov", subjectId = "sub_isl", obtainedMarks = 80.0, componentMarks = mapOf("paper" to 64.0))
+        )
+        val finalSummary = ResultCalculator.computeClassResults(
+            students = listOf(stu),
+            subjects = listOf(math, islamiat),
+            marks = sessionMarks.filter { it.examId == "exam_fin" },
+            resultRecords = emptyList(),
+            classesById = mapOf(schoolClass.id to schoolClass),
+            sectionsById = mapOf(sectionA.id to sectionA),
+            sessionsById = mapOf(session.id to session),
+            examination = finalExam,
+            allGradingRules = ResultCalculator.defaultGradingTemplates(),
+            allExaminations = listOf(term1, finalExam),
+            allSessionMarks = sessionMarks,
+            examSubjectConfigs = compConfigs
+        ).first()
+
+        val mathFin = finalSummary.subjectResults.first { it.subject.id == "sub_math" }
+        val islFin = finalSummary.subjectResults.first { it.subject.id == "sub_isl" }
+        assertEquals(15.0, mathFin.resolvedComponentMarks["cf_t1"] ?: -1.0, 0.001)
+        assertEquals(16.0, islFin.resolvedComponentMarks["cf_t1"] ?: -1.0, 0.001)
+        assertEquals(80.0, mathFin.obtainedMarks ?: -1.0, 0.001)
+        assertEquals(80.0, islFin.obtainedMarks ?: -1.0, 0.001)
+        assertEquals(80.0, finalSummary.overallPercentage, 0.01)
+        assertEquals("A", finalSummary.overallGrade)
+    }
+
     private fun readSheet1Xml(xlsxBytes: ByteArray): String {
         java.util.zip.ZipInputStream(ByteArrayInputStream(xlsxBytes)).use { zis ->
             var entry = zis.nextEntry
