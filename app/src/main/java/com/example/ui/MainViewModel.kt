@@ -329,6 +329,8 @@ class MainViewModel(
         }
     }
 
+    private fun currentSnapshot(): SchoolSnapshot? = (uiState.value as? UiState.Success)?.data
+
     // --- MUTATIONS ---
 
     fun updateCampusSettings(
@@ -341,10 +343,21 @@ class MainViewModel(
         allowDecimalMarks: Boolean,
         activeSessionId: String,
         activeExamId: String,
-        logoBase64: String?
+        logoBase64: String?,
+        secondaryLogoBase64: String? = campus.secondaryLogoBase64
     ) = runMutation("Campus settings saved.") {
         repository.updateCampusSettings(
-            campus, schoolName, campusName, address, contact, studentEntryFields, allowDecimalMarks, activeSessionId, activeExamId, logoBase64
+            campus,
+            schoolName,
+            campusName,
+            address,
+            contact,
+            studentEntryFields,
+            allowDecimalMarks,
+            activeSessionId,
+            activeExamId,
+            logoBase64,
+            secondaryLogoBase64
         )
     }
 
@@ -369,6 +382,16 @@ class MainViewModel(
             res.onSuccess { newId ->
                 if (selectAfterCreate) _selectedExamId.value = newId
                 _actionMessage.value = "Examination '$name' added."
+                val snap = currentSnapshot()
+                repository.logActivity(
+                    campus = campus,
+                    actorName = snap?.currentActorName.orEmpty(),
+                    actorEmail = snap?.currentActorEmail.orEmpty(),
+                    actorRole = snap?.effectiveRole ?: StaffRole.TEACHER,
+                    actionType = "EXAM_CREATED",
+                    summary = "Created examination '${name.trim()}' (${examType.label})",
+                    examName = name.trim()
+                )
             }.onFailure {
                 _actionMessage.value = it.message ?: "Failed to add examination."
             }
@@ -389,11 +412,38 @@ class MainViewModel(
         sortOrder: Long,
         components: List<ExamComponent> = emptyList()
     ) = runMutation("Examination updated.") {
-        repository.updateExamination(campusId, examId, sessionId, name, examType, useCustomGrading, sortOrder, components)
+        val snap = currentSnapshot()
+        val res = repository.updateExamination(campusId, examId, sessionId, name, examType, useCustomGrading, sortOrder, components)
+        if (res.isSuccess && snap != null) {
+            repository.logActivity(
+                campus = snap.campus,
+                actorName = snap.currentActorName,
+                actorEmail = snap.currentActorEmail,
+                actorRole = snap.effectiveRole,
+                actionType = "EXAM_UPDATED",
+                summary = "Updated examination '${name.trim()}' (${components.size} part(s))",
+                examName = name.trim()
+            )
+        }
+        res
     }
 
     fun deleteExamination(campusId: String, examId: String) = runMutation("Examination deleted.") {
-        repository.deleteExamination(campusId, examId)
+        val snap = currentSnapshot()
+        val targetExamName = snap?.examinations?.firstOrNull { it.id == examId }?.name ?: "Examination"
+        val res = repository.deleteExamination(campusId, examId)
+        if (res.isSuccess && snap != null) {
+            repository.logActivity(
+                campus = snap.campus,
+                actorName = snap.currentActorName,
+                actorEmail = snap.currentActorEmail,
+                actorRole = snap.effectiveRole,
+                actionType = "EXAM_DELETED",
+                summary = "Deleted examination '$targetExamName'",
+                examName = targetExamName
+            )
+        }
+        res
     }
 
     fun addClass(campus: Campus, name: String, sortOrder: Long, sectionsCsv: String) {
@@ -470,11 +520,49 @@ class MainViewModel(
         sessionId: String,
         photoBase64: String?
     ) = runMutation(if (studentId == null) "Student added." else "Student updated.") {
-        repository.saveStudent(campus, studentId, name, fatherName, rollNumber, admissionNumber, classId, sectionId, sessionId, photoBase64)
+        val snap = currentSnapshot()
+        val className = snap?.classesById?.get(classId)?.name.orEmpty()
+        val res = repository.saveStudent(campus, studentId, name, fatherName, rollNumber, admissionNumber, classId, sectionId, sessionId, photoBase64)
+        if (res.isSuccess) {
+            val isNew = studentId.isNullOrBlank()
+            repository.logActivity(
+                campus = campus,
+                actorName = snap?.currentActorName.orEmpty(),
+                actorEmail = snap?.currentActorEmail.orEmpty(),
+                actorRole = snap?.effectiveRole ?: StaffRole.TEACHER,
+                actionType = if (isNew) "STUDENT_ADDED" else "STUDENT_UPDATED",
+                summary = if (isNew) {
+                    "Added student ${name.trim()} to ${className.ifBlank { "class" }}"
+                } else {
+                    "Updated student ${name.trim()} in ${className.ifBlank { "class" }}"
+                },
+                classId = classId,
+                className = className,
+                studentName = name.trim()
+            )
+        }
+        res
     }
 
     fun deleteStudent(campusId: String, studentId: String) = runMutation("Student removed.") {
-        repository.deleteStudent(campusId, studentId)
+        val snap = currentSnapshot()
+        val targetStu = snap?.students?.firstOrNull { it.id == studentId }
+        val className = targetStu?.let { snap.classesById[it.classId]?.name }.orEmpty()
+        val res = repository.deleteStudent(campusId, studentId)
+        if (res.isSuccess && snap != null) {
+            repository.logActivity(
+                campus = snap.campus,
+                actorName = snap.currentActorName,
+                actorEmail = snap.currentActorEmail,
+                actorRole = snap.effectiveRole,
+                actionType = "STUDENT_DELETED",
+                summary = "Removed student ${targetStu?.name ?: "Student"} from ${className.ifBlank { "class" }}",
+                classId = targetStu?.classId.orEmpty(),
+                className = className,
+                studentName = targetStu?.name.orEmpty()
+            )
+        }
+        res
     }
 
     suspend fun saveMarkEntrySuspend(
@@ -611,9 +699,25 @@ class MainViewModel(
     fun importStudents(campus: Campus, drafts: List<ImportedStudentDraft>) {
         viewModelScope.launch {
             _isBusy.value = true
+            val snap = currentSnapshot()
             val res = repository.importStudents(campus, drafts)
             _isBusy.value = false
-            res.onSuccess { count -> _actionMessage.value = "Imported $count students successfully." }
+            res.onSuccess { count ->
+                _actionMessage.value = "Imported $count students successfully."
+                val firstDraft = drafts.firstOrNull()
+                val distinctClasses = drafts.map { it.className }.filter { it.isNotBlank() }.distinct()
+                repository.logActivity(
+                    campus = campus,
+                    actorName = snap?.currentActorName.orEmpty(),
+                    actorEmail = snap?.currentActorEmail.orEmpty(),
+                    actorRole = snap?.effectiveRole ?: StaffRole.TEACHER,
+                    actionType = "STUDENT_ADDED",
+                    summary = "Imported $count student(s) into ${distinctClasses.joinToString(", ").ifBlank { "class" }}",
+                    classId = firstDraft?.classId.orEmpty(),
+                    className = distinctClasses.joinToString(", "),
+                    studentName = if (count == 1) firstDraft?.name.orEmpty() else "$count students"
+                )
+            }
                 .onFailure { _actionMessage.value = it.message ?: "Import failed." }
         }
     }

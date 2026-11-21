@@ -44,11 +44,15 @@ service cloud.firestore {
       );
     }
 
-    function isCampusTeacherForClass(campusId, classId) {
+    function isCampusTeacher(campusId) {
       return isSignedIn() &&
         exists(/databases/$(database)/documents/campuses/$(campusId)/staff/$(request.auth.uid)) &&
         get(/databases/$(database)/documents/campuses/$(campusId)/staff/$(request.auth.uid)).data.active == true &&
-        get(/databases/$(database)/documents/campuses/$(campusId)/staff/$(request.auth.uid)).data.role == 'TEACHER' &&
+        get(/databases/$(database)/documents/campuses/$(campusId)/staff/$(request.auth.uid)).data.role == 'TEACHER';
+    }
+
+    function isCampusTeacherForClass(campusId, classId) {
+      return isCampusTeacher(campusId) &&
         classId in get(/databases/$(database)/documents/campuses/$(campusId)/staff/$(request.auth.uid)).data.assignedClassIds;
     }
 
@@ -71,6 +75,7 @@ service cloud.firestore {
         (!('contact' in data) || (data.contact is string && data.contact.size() <= 80)) &&
         (!('studentEntryFields' in data) || (data.studentEntryFields is list && data.studentEntryFields.size() <= 10)) &&
         (!('logoBase64' in data) || (data.logoBase64 is string && data.logoBase64.size() <= 300000)) &&
+        (!('secondaryLogoBase64' in data) || (data.secondaryLogoBase64 is string && data.secondaryLogoBase64.size() <= 300000)) &&
         data.activeSessionId is string && data.activeSessionId.size() <= 128 &&
         data.activeExamId is string && data.activeExamId.size() <= 128 &&
         data.allowDecimalMarks is bool &&
@@ -231,7 +236,7 @@ service cloud.firestore {
         data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 100 &&
         data.actorEmail is string && data.actorEmail.size() <= 120 &&
         data.actorRole in ['ADMIN', 'TEACHER'] &&
-        data.actionType in ['MARKS_SAVED', 'TOTAL_MARKS_UPDATED', 'REMARKS_SAVED'] &&
+        data.actionType in ['MARKS_SAVED', 'TOTAL_MARKS_UPDATED', 'REMARKS_SAVED', 'STUDENT_ADDED', 'STUDENT_UPDATED', 'STUDENT_DELETED', 'EXAM_CREATED', 'EXAM_UPDATED', 'EXAM_DELETED'] &&
         data.summary is string && data.summary.size() >= 1 && data.summary.size() <= 300 &&
         data.classId is string && data.classId.size() <= 128 &&
         data.className is string && data.className.size() <= 80 &&
@@ -262,14 +267,14 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidId(campusId) &&
         incoming().ownerId == request.auth.uid &&
         incoming().keys().hasAll(['ownerId', 'memberUids', 'schoolName', 'campusName', 'activeSessionId', 'activeExamId', 'allowDecimalMarks', 'createdAt', 'updatedAt']) &&
-        incoming().keys().hasOnly(['ownerId', 'memberUids', 'schoolName', 'campusName', 'address', 'contact', 'studentEntryFields', 'logoBase64', 'activeSessionId', 'activeExamId', 'allowDecimalMarks', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['ownerId', 'memberUids', 'schoolName', 'campusName', 'address', 'contact', 'studentEntryFields', 'logoBase64', 'secondaryLogoBase64', 'activeSessionId', 'activeExamId', 'allowDecimalMarks', 'createdAt', 'updatedAt']) &&
         isValidCampus(incoming());
       allow update: if isValidId(campusId) &&
         isValidCampus(incoming()) &&
         isCampusAdmin(campusId) &&
         incoming().ownerId == existing().ownerId &&
         incoming().createdAt == existing().createdAt &&
-        incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'schoolName', 'campusName', 'address', 'contact', 'studentEntryFields', 'logoBase64', 'activeSessionId', 'activeExamId', 'allowDecimalMarks', 'updatedAt']);
+        incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'schoolName', 'campusName', 'address', 'contact', 'studentEntryFields', 'logoBase64', 'secondaryLogoBase64', 'activeSessionId', 'activeExamId', 'allowDecimalMarks', 'updatedAt']);
       allow delete: if isSignedIn() && isValidId(campusId) && existing().ownerId == request.auth.uid;
 
       match /staff/{staffId} {
@@ -313,14 +318,14 @@ service cloud.firestore {
           incoming().keys().hasAll(['ownerId', 'memberUids', 'sessionId', 'name', 'examType', 'useCustomGrading', 'sortOrder', 'createdAt', 'updatedAt']) &&
           incoming().keys().hasOnly(['ownerId', 'memberUids', 'sessionId', 'name', 'examType', 'useCustomGrading', 'sortOrder', 'components', 'createdAt', 'updatedAt']) &&
           isValidExamination(incoming()) &&
-          isCampusAdmin(campusId);
+          (isCampusAdmin(campusId) || isCampusTeacher(campusId));
         allow update: if isValidId(examId) &&
           isValidExamination(incoming()) &&
-          isCampusAdmin(campusId) &&
+          (isCampusAdmin(campusId) || isCampusTeacher(campusId)) &&
           incoming().ownerId == existing().ownerId &&
           incoming().createdAt == existing().createdAt &&
           incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'sessionId', 'name', 'examType', 'useCustomGrading', 'sortOrder', 'components', 'updatedAt']);
-        allow delete: if isValidId(examId) && isCampusAdmin(campusId);
+        allow delete: if isValidId(examId) && (isCampusAdmin(campusId) || isCampusTeacher(campusId));
       }
 
       match /classes/{classId} {
@@ -381,14 +386,14 @@ service cloud.firestore {
           incoming().keys().hasAll(['ownerId', 'memberUids', 'name', 'fatherName', 'rollNumber', 'admissionNumber', 'classId', 'sectionId', 'sessionId', 'createdAt', 'updatedAt']) &&
           incoming().keys().hasOnly(['ownerId', 'memberUids', 'name', 'fatherName', 'rollNumber', 'admissionNumber', 'classId', 'sectionId', 'sessionId', 'photoBase64', 'createdAt', 'updatedAt']) &&
           isValidStudent(incoming()) &&
-          isCampusAdmin(campusId);
+          (isCampusAdmin(campusId) || isCampusTeacherForClass(campusId, incoming().classId));
         allow update: if isValidId(studentId) &&
           isValidStudent(incoming()) &&
-          isCampusAdmin(campusId) &&
+          (isCampusAdmin(campusId) || (isCampusTeacherForClass(campusId, existing().classId) && isCampusTeacherForClass(campusId, incoming().classId))) &&
           incoming().ownerId == existing().ownerId &&
           incoming().createdAt == existing().createdAt &&
           incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'name', 'fatherName', 'rollNumber', 'admissionNumber', 'classId', 'sectionId', 'sessionId', 'photoBase64', 'updatedAt']);
-        allow delete: if isValidId(studentId) && isCampusAdmin(campusId);
+        allow delete: if isValidId(studentId) && (isCampusAdmin(campusId) || isCampusTeacherForClass(campusId, existing().classId));
       }
 
       match /marks/{markId} {
@@ -478,7 +483,7 @@ service cloud.firestore {
           incoming().keys().hasAll(['ownerId', 'memberUids', 'actorUid', 'actorName', 'actorEmail', 'actorRole', 'actionType', 'summary', 'classId', 'className', 'subjectName', 'examName', 'studentName', 'createdAt']) &&
           incoming().keys().hasOnly(['ownerId', 'memberUids', 'actorUid', 'actorName', 'actorEmail', 'actorRole', 'actionType', 'summary', 'classId', 'className', 'subjectName', 'examName', 'studentName', 'createdAt']) &&
           isValidActivityLog(incoming()) &&
-          (isCampusAdmin(campusId) || isCampusTeacherForClass(campusId, incoming().classId));
+          (isCampusAdmin(campusId) || isCampusTeacher(campusId));
         allow update: if isValidId(logId) &&
           isCampusAdmin(campusId) &&
           incoming().ownerId == existing().ownerId &&

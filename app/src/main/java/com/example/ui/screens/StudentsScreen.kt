@@ -76,6 +76,7 @@ fun StudentsScreen(
     onNavigate: (String) -> Unit
 ) {
     val isAdmin = snapshot.effectiveRole == StaffRole.ADMIN
+    val canManageStudents = snapshot.visibleClasses.isNotEmpty()
     var searchQuery by remember { mutableStateOf("") }
     var filterClassId by remember { mutableStateOf("ALL") }
     var editingStudent by remember { mutableStateOf<Student?>(null) }
@@ -98,7 +99,7 @@ fun StudentsScreen(
 
     Scaffold(
         floatingActionButton = {
-            if (isAdmin && snapshot.visibleClasses.isNotEmpty()) {
+            if (canManageStudents) {
                 FloatingActionButton(
                     onClick = {
                         editingStudent = null
@@ -145,7 +146,7 @@ fun StudentsScreen(
                     .testTag("student_search_input")
             )
 
-            if (isAdmin && snapshot.visibleClasses.isNotEmpty()) {
+            if (canManageStudents) {
                 Spacer(Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -216,8 +217,12 @@ fun StudentsScreen(
             if (snapshot.visibleClasses.isEmpty()) {
                 EmptyStateCard(
                     icon = Icons.Default.People,
-                    title = "Create Classes First",
-                    description = "Before adding students, create classes and sections in Class Management.",
+                    title = if (isAdmin) "Create Classes First" else "No Classes Assigned Yet",
+                    description = if (isAdmin) {
+                        "Before adding students, create classes and sections in Class Management."
+                    } else {
+                        "No classes have been allotted to your teacher account yet. Once your administrator assigns your class, you can manage its students here."
+                    },
                     actionLabel = if (isAdmin) "Open Class Management" else null,
                     onAction = if (isAdmin) ({ onNavigate(AppRoute.CLASSES) }) else null
                 )
@@ -226,11 +231,11 @@ fun StudentsScreen(
                     icon = Icons.Default.People,
                     title = "No Students Found",
                     description = "Tap + to add a new student or import your student roster from an Excel (.xlsx) spreadsheet.",
-                    actionLabel = if (isAdmin) "Add Student" else null,
-                    onAction = if (isAdmin) ({
+                    actionLabel = "Add Student",
+                    onAction = {
                         editingStudent = null
                         showAddEditDialog = true
-                    }) else null
+                    }
                 )
             } else {
                 LazyColumn(
@@ -281,7 +286,7 @@ fun StudentsScreen(
                                         color = EducatorsBlue
                                     )
                                 }
-                                if (isAdmin) {
+                                if (canManageStudents) {
                                     IconButton(
                                         onClick = {
                                             editingStudent = st

@@ -111,6 +111,9 @@ fun SettingsScreen(
     }
     var allowDecimalMarks by remember(snapshot.campus.allowDecimalMarks) { mutableStateOf(snapshot.campus.allowDecimalMarks) }
     var logoBase64 by remember(snapshot.campus.logoBase64) { mutableStateOf(snapshot.campus.logoBase64) }
+    var secondaryLogoBase64 by remember(snapshot.campus.secondaryLogoBase64) {
+        mutableStateOf(snapshot.campus.secondaryLogoBase64?.takeIf { it.isNotBlank() })
+    }
 
     val logoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -130,7 +133,32 @@ fun SettingsScreen(
                     allowDecimalMarks = allowDecimalMarks,
                     activeSessionId = snapshot.selectedSessionId,
                     activeExamId = snapshot.selectedExamId,
-                    logoBase64 = encoded
+                    logoBase64 = encoded,
+                    secondaryLogoBase64 = secondaryLogoBase64
+                )
+            }
+        }
+    }
+
+    val secondaryLogoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            val encoded = FileExportHelper.uriToCompressedBase64(context, uri, maxPx = 220)
+            if (encoded != null) {
+                secondaryLogoBase64 = encoded
+                viewModel.updateCampusSettings(
+                    campus = snapshot.campus,
+                    schoolName = schoolName,
+                    campusName = campusName,
+                    address = campusAddress,
+                    contact = campusContact,
+                    studentEntryFields = studentEntryFields.toList(),
+                    allowDecimalMarks = allowDecimalMarks,
+                    activeSessionId = snapshot.selectedSessionId,
+                    activeExamId = snapshot.selectedExamId,
+                    logoBase64 = logoBase64,
+                    secondaryLogoBase64 = encoded
                 )
             }
         }
@@ -172,8 +200,8 @@ fun SettingsScreen(
                     tabTitle = "Teacher Account",
                     summary = "View your assigned classes, school portal details, and manage your signed-in account.",
                     items = listOf(
-                        LegendBadge("TEACHER", AmberPending, "Edit total marks & enter student marks"),
-                        LegendBadge("Live Sync", EmeraldPass, "Marks sync instantly with school campus")
+                        LegendBadge("TEACHER", AmberPending, "Manage assigned class students, exams & marks"),
+                        LegendBadge("Live Sync", EmeraldPass, "Changes sync instantly with school portal")
                     )
                 )
             }
@@ -270,13 +298,9 @@ fun SettingsScreen(
                         }
                     }
 
-                    // Teachers on a shared school portal must NEVER see their empty personal Admin workspace.
-                    val switchableCampuses = if (snapshot.isOwnerOrAdmin) {
-                        snapshot.accessibleCampuses
-                    } else {
-                        snapshot.accessibleCampuses.filter { it.ownerId != viewModel.currentUserId }
-                    }
-                    if (switchableCampuses.size > 1) {
+                    // Campus switching is strictly Admin-only so Teachers never see personal Admin workspaces
+                    val switchableCampuses = if (isAdmin) snapshot.accessibleCampuses else emptyList()
+                    if (isAdmin && switchableCampuses.size > 1) {
                         Text(
                             text = "Switch Campus Portal:",
                             style = MaterialTheme.typography.labelMedium,
@@ -337,28 +361,37 @@ fun SettingsScreen(
                         }
                     }
 
+                    // Role preview is ONLY visible to true Administrators. Real teachers NEVER see this.
                     if (snapshot.isOwnerOrAdmin) {
-                        Text(
-                            text = "Preview Role Permissions (Admin vs Teacher):",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(
-                                selected = snapshot.effectiveRole == StaffRole.ADMIN,
-                                onClick = { viewModel.setRolePreview(null, emptyList()) },
-                                label = { Text("Administrator") }
-                            )
-                            FilterChip(
-                                selected = snapshot.effectiveRole == StaffRole.TEACHER,
+                        if (isAdmin) {
+                            OutlinedButton(
                                 onClick = {
                                     viewModel.setRolePreview(
                                         StaffRole.TEACHER,
                                         snapshot.classes.take(2).map { it.id }
                                     )
                                 },
-                                label = { Text("Teacher View") }
-                            )
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 48.dp)
+                                    .testTag("preview_teacher_portal_btn")
+                            ) {
+                                Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Preview Teacher Portal")
+                            }
+                        } else {
+                            OutlinedButton(
+                                onClick = { viewModel.setRolePreview(null, emptyList()) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 48.dp)
+                                    .testTag("exit_teacher_preview_btn")
+                            ) {
+                                Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Exit Teacher Preview")
+                            }
                         }
                     }
 
@@ -398,17 +431,118 @@ fun SettingsScreen(
                                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                                         )
                                     },
-                                    modifier = Modifier.heightIn(min = 48.dp)
+                                    modifier = Modifier.heightIn(min = 48.dp).testTag("upload_school_logo_btn")
                                 ) {
                                     Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(6.dp))
-                                    Text("Upload School Logo")
+                                    Text("Upload Left School Logo")
                                 }
                                 Text(
-                                    text = "Saves & syncs instantly to all teacher portals.",
+                                    text = "Top-left logo on reports. Syncs instantly to all teachers.",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                            }
+                        }
+
+                        // Optional Top-Right Logo / Emblem for Progress Report & Consolidated Sheet
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.background,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                if (!secondaryLogoBase64.isNullOrBlank()) {
+                                    OptionalCornerLogo(
+                                        logoBase64 = secondaryLogoBase64,
+                                        sizeDp = 52,
+                                        paddingDp = 2
+                                    )
+                                } else {
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = MaterialTheme.colorScheme.surface,
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                                        modifier = Modifier.size(52.dp)
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.fillMaxSize(),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.Center
+                                        ) {
+                                            Text(
+                                                text = "Empty",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Text(
+                                        text = "Right-Corner Image (Optional)",
+                                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                        color = EducatorsNavy
+                                    )
+                                    Text(
+                                        text = "Shown on top-right of Result Cards & Consolidated Sheets. Leave empty if not needed.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                secondaryLogoPickerLauncher.launch(
+                                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                                )
+                                            },
+                                            modifier = Modifier
+                                                .heightIn(min = 44.dp)
+                                                .testTag("upload_secondary_logo_btn")
+                                        ) {
+                                            Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text(if (secondaryLogoBase64.isNullOrBlank()) "Add Right Image" else "Change")
+                                        }
+                                        if (!secondaryLogoBase64.isNullOrBlank()) {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    secondaryLogoBase64 = null
+                                                    viewModel.updateCampusSettings(
+                                                        campus = snapshot.campus,
+                                                        schoolName = schoolName,
+                                                        campusName = campusName,
+                                                        address = campusAddress,
+                                                        contact = campusContact,
+                                                        studentEntryFields = studentEntryFields.toList(),
+                                                        allowDecimalMarks = allowDecimalMarks,
+                                                        activeSessionId = snapshot.selectedSessionId,
+                                                        activeExamId = snapshot.selectedExamId,
+                                                        logoBase64 = logoBase64,
+                                                        secondaryLogoBase64 = ""
+                                                    )
+                                                },
+                                                colors = ButtonDefaults.outlinedButtonColors(contentColor = CrimsonFail),
+                                                border = BorderStroke(1.dp, CrimsonFail.copy(alpha = 0.5f)),
+                                                modifier = Modifier
+                                                    .heightIn(min = 44.dp)
+                                                    .testTag("remove_secondary_logo_btn")
+                                            ) {
+                                                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(Modifier.width(4.dp))
+                                                Text("Remove")
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -498,7 +632,8 @@ fun SettingsScreen(
                                     allowDecimalMarks = allowDecimalMarks,
                                     activeSessionId = snapshot.selectedSessionId,
                                     activeExamId = snapshot.selectedExamId,
-                                    logoBase64 = logoBase64
+                                    logoBase64 = logoBase64,
+                                    secondaryLogoBase64 = secondaryLogoBase64
                                 )
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = EducatorsNavy),

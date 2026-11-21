@@ -128,7 +128,7 @@ fun ExcelCenterScreen(
                         "STUDENTS" -> PendingImportState.Students(
                             XlsxEngine.parseAndValidateStudents(
                                 inputStream = stream,
-                                classes = snapshot.classes,
+                                classes = snapshot.visibleClasses,
                                 sections = snapshot.sections,
                                 sessions = snapshot.sessions,
                                 existingStudents = snapshot.students,
@@ -443,7 +443,7 @@ fun ExcelCenterScreen(
             Text("Excel (.xlsx) Validated Imports", style = MaterialTheme.typography.titleMedium, color = EducatorsNavy)
         }
 
-        if (isAdmin) {
+        if (snapshot.visibleClasses.isNotEmpty()) {
             item {
                 Card(
                     shape = RoundedCornerShape(14.dp),
@@ -483,6 +483,9 @@ fun ExcelCenterScreen(
                     }
                 )
             }
+        }
+
+        if (isAdmin) {
             item {
                 ImportActionCard(
                     title = "Import Subject Lists (.xlsx)",
@@ -770,7 +773,8 @@ fun PdfCenterScreen(
                         triggerSave(
                             PdfReportGenerator.generateResultCardsPdf(
                                 context, listOf(it), snapshot.campus.schoolName, snapshot.campus.campusName,
-                                snapshot.campus.logoBase64, snapshot.campus.address, snapshot.campus.contact
+                                snapshot.campus.logoBase64, snapshot.campus.address, snapshot.campus.contact,
+                                snapshot.campus.secondaryLogoBase64
                             )
                         )
                     }
@@ -779,7 +783,8 @@ fun PdfCenterScreen(
                     stuSum?.let {
                         val f = PdfReportGenerator.generateResultCardsPdf(
                             context, listOf(it), snapshot.campus.schoolName, snapshot.campus.campusName,
-                            snapshot.campus.logoBase64, snapshot.campus.address, snapshot.campus.contact
+                            snapshot.campus.logoBase64, snapshot.campus.address, snapshot.campus.contact,
+                            snapshot.campus.secondaryLogoBase64
                         )
                         PdfReportGenerator.printPdfFile(context, f, "ProgressReport_${it.student.name}")
                     }
@@ -788,7 +793,8 @@ fun PdfCenterScreen(
                     stuSum?.let {
                         val f = PdfReportGenerator.generateResultCardsPdf(
                             context, listOf(it), snapshot.campus.schoolName, snapshot.campus.campusName,
-                            snapshot.campus.logoBase64, snapshot.campus.address, snapshot.campus.contact
+                            snapshot.campus.logoBase64, snapshot.campus.address, snapshot.campus.contact,
+                            snapshot.campus.secondaryLogoBase64
                         )
                         FileExportHelper.shareFile(context, f, "application/pdf", "Share Progress Report PDF")
                     }
@@ -806,21 +812,24 @@ fun PdfCenterScreen(
                     triggerSave(
                         PdfReportGenerator.generateResultCardsPdf(
                             context, classSummaries, snapshot.campus.schoolName, snapshot.campus.campusName,
-                            snapshot.campus.logoBase64, snapshot.campus.address, snapshot.campus.contact
+                            snapshot.campus.logoBase64, snapshot.campus.address, snapshot.campus.contact,
+                            snapshot.campus.secondaryLogoBase64
                         )
                     )
                 },
                 onPrint = {
                     val f = PdfReportGenerator.generateResultCardsPdf(
                         context, classSummaries, snapshot.campus.schoolName, snapshot.campus.campusName,
-                        snapshot.campus.logoBase64, snapshot.campus.address, snapshot.campus.contact
+                        snapshot.campus.logoBase64, snapshot.campus.address, snapshot.campus.contact,
+                        snapshot.campus.secondaryLogoBase64
                     )
                     PdfReportGenerator.printPdfFile(context, f, "All_Progress_Reports")
                 },
                 onShare = {
                     val f = PdfReportGenerator.generateResultCardsPdf(
                         context, classSummaries, snapshot.campus.schoolName, snapshot.campus.campusName,
-                        snapshot.campus.logoBase64, snapshot.campus.address, snapshot.campus.contact
+                        snapshot.campus.logoBase64, snapshot.campus.address, snapshot.campus.contact,
+                        snapshot.campus.secondaryLogoBase64
                     )
                     FileExportHelper.shareFile(context, f, "application/pdf", "Share All Progress Reports PDF")
                 }
@@ -840,7 +849,8 @@ fun PdfCenterScreen(
                         PdfReportGenerator.generateClassResultSheetPdf(
                             context, snapshot.campus.schoolName, snapshot.campus.campusName, snapshot.campus.logoBase64,
                             className, "All Sections", snapshot.selectedExam?.name ?: "Exam", snapshot.selectedSession?.name ?: "Session",
-                            classSubjects, classSummaries, snapshot.campus.address, snapshot.campus.contact, examComps
+                            classSubjects, classSummaries, snapshot.campus.address, snapshot.campus.contact, examComps,
+                            snapshot.campus.secondaryLogoBase64
                         )
                     )
                 },
@@ -848,7 +858,8 @@ fun PdfCenterScreen(
                     val f = PdfReportGenerator.generateClassResultSheetPdf(
                         context, snapshot.campus.schoolName, snapshot.campus.campusName, snapshot.campus.logoBase64,
                         className, "All Sections", snapshot.selectedExam?.name ?: "Exam", snapshot.selectedSession?.name ?: "Session",
-                        classSubjects, classSummaries, snapshot.campus.address, snapshot.campus.contact, examComps
+                        classSubjects, classSummaries, snapshot.campus.address, snapshot.campus.contact, examComps,
+                        snapshot.campus.secondaryLogoBase64
                     )
                     PdfReportGenerator.printPdfFile(context, f, "ConsolidatedSheet_$className")
                 },
@@ -856,7 +867,8 @@ fun PdfCenterScreen(
                     val f = PdfReportGenerator.generateClassResultSheetPdf(
                         context, snapshot.campus.schoolName, snapshot.campus.campusName, snapshot.campus.logoBase64,
                         className, "All Sections", snapshot.selectedExam?.name ?: "Exam", snapshot.selectedSession?.name ?: "Session",
-                        classSubjects, classSummaries, snapshot.campus.address, snapshot.campus.contact, examComps
+                        classSubjects, classSummaries, snapshot.campus.address, snapshot.campus.contact, examComps,
+                        snapshot.campus.secondaryLogoBase64
                     )
                     FileExportHelper.shareFile(context, f, "application/pdf", "Share Consolidated Sheet PDF")
                 }

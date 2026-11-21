@@ -444,16 +444,13 @@ fun CampusContextBar(
     onCreateExam: (() -> Unit)? = null
 ) {
     val selectedExam = snapshot.selectedExam
-    val isAdmin = snapshot.effectiveRole == StaffRole.ADMIN
-    val examFooterActions = remember(selectedExam, isAdmin, onEditSelectedExam, onCreateExam) {
+    val examFooterActions = remember(selectedExam, onEditSelectedExam, onCreateExam) {
         buildList {
-            if (isAdmin) {
-                if (selectedExam != null && onEditSelectedExam != null) {
-                    add("✎ Edit '${selectedExam.name}'" to { onEditSelectedExam(selectedExam) })
-                }
-                if (onCreateExam != null) {
-                    add("+ Create New Examination" to onCreateExam)
-                }
+            if (selectedExam != null && onEditSelectedExam != null) {
+                add("✎ Edit '${selectedExam.name}'" to { onEditSelectedExam(selectedExam) })
+            }
+            if (onCreateExam != null) {
+                add("+ Create New Examination" to onCreateExam)
             }
         }
     }
@@ -483,7 +480,7 @@ fun CampusContextBar(
             footerActions = examFooterActions,
             modifier = Modifier.weight(1.1f)
         )
-        if (onEditSelectedExam != null && isAdmin && selectedExam != null) {
+        if (onEditSelectedExam != null && selectedExam != null) {
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surface,
@@ -930,6 +927,41 @@ fun SchoolLogoBadge(
                     .clip(CircleShape)
             )
         }
+    }
+}
+
+@Composable
+fun OptionalCornerLogo(
+    logoBase64: String?,
+    sizeDp: Int = 44,
+    paddingDp: Int = 2
+) {
+    val bmp = remember(logoBase64) {
+        if (logoBase64.isNullOrBlank()) null
+        else try {
+            val bytes = Base64.decode(logoBase64, Base64.DEFAULT)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        } catch (_: Exception) {
+            null
+        }
+    }
+    if (bmp != null) {
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = Color.White,
+            modifier = Modifier.size(sizeDp.dp)
+        ) {
+            androidx.compose.foundation.Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = "Right corner emblem",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingDp.dp)
+            )
+        }
+    } else {
+        Spacer(modifier = Modifier.size(sizeDp.dp))
     }
 }
 

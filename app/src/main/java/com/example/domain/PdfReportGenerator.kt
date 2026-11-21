@@ -69,10 +69,12 @@ object PdfReportGenerator {
         campusName: String,
         schoolLogoBase64: String?,
         address: String = "",
-        contact: String = ""
+        contact: String = "",
+        secondaryLogoBase64: String? = null
     ): File {
         val doc = PdfDocument()
         val logoBitmap = decodeLogoBitmap(context, schoolLogoBase64)
+        val secondaryLogoBitmap = decodeBase64Bitmap(secondaryLogoBase64)
         val totalPages = summaries.size.coerceAtLeast(1)
 
         summaries.forEachIndexed { idx, summary ->
@@ -86,6 +88,7 @@ object PdfReportGenerator {
                 address = address,
                 contact = contact,
                 logoBitmap = logoBitmap,
+                secondaryLogoBitmap = secondaryLogoBitmap,
                 pageNumber = idx + 1,
                 totalPages = totalPages
             )
@@ -115,10 +118,12 @@ object PdfReportGenerator {
         summaries: List<StudentResultSummary>,
         address: String = "",
         contact: String = "",
-        examComponents: List<ExamComponent> = emptyList()
+        examComponents: List<ExamComponent> = emptyList(),
+        secondaryLogoBase64: String? = null
     ): File {
         val doc = PdfDocument()
         val logoBitmap = decodeLogoBitmap(context, schoolLogoBase64)
+        val secondaryLogoBitmap = decodeBase64Bitmap(secondaryLogoBase64)
         val sortedSubjects = subjects.sortedWith(compareBy<Subject> { it.sortOrder }.thenBy { it.name })
         val rowsPerPage = 20
         val chunks = if (summaries.isEmpty()) listOf(emptyList()) else summaries.chunked(rowsPerPage)
@@ -141,10 +146,12 @@ object PdfReportGenerator {
             }
             canvas.drawRect(18f, 18f, A4_LANDSCAPE_WIDTH - 18f, A4_LANDSCAPE_HEIGHT - 18f, framePaint)
 
-            // Left and right crest logos
+            // Top-left school logo & optional top-right secondary logo (left empty if not uploaded)
             if (logoBitmap != null) {
                 canvas.drawBitmap(logoBitmap, null, RectF(26f, 24f, 74f, 72f), null)
-                canvas.drawBitmap(logoBitmap, null, RectF(A4_LANDSCAPE_WIDTH - 74f, 24f, A4_LANDSCAPE_WIDTH - 26f, 72f), null)
+            }
+            if (secondaryLogoBitmap != null) {
+                canvas.drawBitmap(secondaryLogoBitmap, null, RectF(A4_LANDSCAPE_WIDTH - 74f, 24f, A4_LANDSCAPE_WIDTH - 26f, 72f), null)
             }
 
             // Centered Consolidated Sheet Header
@@ -552,6 +559,7 @@ object PdfReportGenerator {
         address: String,
         contact: String,
         logoBitmap: Bitmap?,
+        secondaryLogoBitmap: Bitmap?,
         pageNumber: Int,
         totalPages: Int
     ) {
@@ -572,22 +580,27 @@ object PdfReportGenerator {
         }
         canvas.drawRect(18f, 18f, A4_WIDTH - 18f, A4_HEIGHT - 18f, outerBorder)
 
-        // Top Left Crests + "Progress Report" Top Banner
+        // Top Left Logo + Centered "Progress Report" Ribbon + Optional Top Right Image (empty if not uploaded)
         var y = 26f
         if (logoBitmap != null) {
             canvas.drawBitmap(logoBitmap, null, RectF(contentLeft, y, contentLeft + 46f, y + 46f), null)
         }
-        // Student photo top right if available
         val stuBmp = decodeBase64Bitmap(summary.student.photoBase64)
-        if (stuBmp != null) {
-            val photoRect = RectF(contentRight - 46f, y, contentRight, y + 46f)
-            canvas.drawBitmap(stuBmp, null, photoRect, null)
-            canvas.drawRect(photoRect, strokePaint)
+        val rightRect = RectF(contentRight - 46f, y, contentRight, y + 46f)
+        when {
+            secondaryLogoBitmap != null -> {
+                canvas.drawBitmap(secondaryLogoBitmap, null, rightRect, null)
+            }
+            stuBmp != null -> {
+                canvas.drawBitmap(stuBmp, null, rightRect, null)
+                canvas.drawRect(rightRect, strokePaint)
+            }
+            // Otherwise leave right corner completely empty
         }
 
-        // Pink/Crimson Progress Report Ribbon Header (matches physical Progress Report)
-        val ribbonLeft = contentLeft + 125f
-        val ribbonRight = contentRight - if (stuBmp != null) 54f else 0f
+        // Pink/Crimson Progress Report Ribbon Header (balanced symmetrically)
+        val ribbonLeft = contentLeft + 56f
+        val ribbonRight = contentRight - 56f
         val ribbonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ribbonRoseColor }
         canvas.drawRoundRect(RectF(ribbonLeft, y + 2f, ribbonRight, y + 32f), 4f, 4f, ribbonPaint)
         val ribbonText = Paint(Paint.ANTI_ALIAS_FLAG).apply {

@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
@@ -50,6 +51,8 @@ import com.example.data.model.StaffRole
 import com.example.ui.SchoolSnapshot
 import com.example.ui.theme.AmberPending
 import com.example.ui.theme.AmberPendingContainer
+import com.example.ui.theme.CrimsonFail
+import com.example.ui.theme.CrimsonFailContainer
 import com.example.ui.theme.EducatorsBlue
 import com.example.ui.theme.EducatorsBlueSurface
 import com.example.ui.theme.EducatorsNavy
@@ -80,7 +83,7 @@ fun TeacherActivityScreen(
         return
     }
 
-    var selectedActionFilter by remember { mutableStateOf("ALL") } // ALL, MARKS_SAVED, TOTAL_MARKS_UPDATED
+    var selectedActionFilter by remember { mutableStateOf("ALL") } // ALL, MARKS, TOTALS, STUDENTS, EXAMS
     var selectedTeacherUid by remember { mutableStateOf("ALL") }
 
     val teachers = remember(snapshot.staff) {
@@ -88,15 +91,24 @@ fun TeacherActivityScreen(
     }
 
     val logs = snapshot.activityLogs
-    val marksSavedCount = remember(logs) { logs.count { it.actionType == "MARKS_SAVED" } }
+    val marksSavedCount = remember(logs) { logs.count { it.actionType == "MARKS_SAVED" || it.actionType == "REMARKS_SAVED" } }
     val totalMarksEditedCount = remember(logs) { logs.count { it.actionType == "TOTAL_MARKS_UPDATED" } }
+    val studentsChangedCount = remember(logs) { logs.count { it.actionType.startsWith("STUDENT_") } }
+    val examsChangedCount = remember(logs) { logs.count { it.actionType.startsWith("EXAM_") } }
     val activeTeacherUids = remember(logs) {
         logs.filter { it.actorRole == StaffRole.TEACHER.name }.map { it.actorUid }.toSet()
     }
 
     val filteredLogs = remember(logs, selectedActionFilter, selectedTeacherUid) {
         logs.filter { log ->
-            val matchesAction = selectedActionFilter == "ALL" || log.actionType == selectedActionFilter
+            val matchesAction = when (selectedActionFilter) {
+                "ALL" -> true
+                "MARKS" -> log.actionType == "MARKS_SAVED" || log.actionType == "REMARKS_SAVED"
+                "TOTALS" -> log.actionType == "TOTAL_MARKS_UPDATED"
+                "STUDENTS" -> log.actionType.startsWith("STUDENT_")
+                "EXAMS" -> log.actionType.startsWith("EXAM_")
+                else -> log.actionType == selectedActionFilter
+            }
             val matchesTeacher = selectedTeacherUid == "ALL" || log.actorUid == selectedTeacherUid
             matchesAction && matchesTeacher
         }
@@ -128,11 +140,11 @@ fun TeacherActivityScreen(
         item {
             TabLegendCard(
                 tabTitle = "Teacher Activity Monitor",
-                summary = "Real-time audit log of marks entered and per-subject assessment total marks edited by teachers.",
+                summary = "Real-time audit log of every student added/edited, examination updated, total marks edited, and student marks entered.",
                 items = listOf(
-                    LegendBadge("Marks Saved", EmeraldPass, "Student marks added or updated"),
-                    LegendBadge("Total Marks", EducatorsBlue, "Subject total/assessment marks edited"),
-                    LegendBadge("Live Sync", AmberPending, "Updates automatically in real time")
+                    LegendBadge("Marks", EmeraldPass, "Student marks saved"),
+                    LegendBadge("Total Marks", EducatorsBlue, "Assessment totals edited"),
+                    LegendBadge("Students & Exams", AmberPending, "Roster or exam updates")
                 )
             )
         }
@@ -195,8 +207,10 @@ fun TeacherActivityScreen(
             items(teachers, key = { "teacher_ov_${it.id}" }) { teacher ->
                 val uid = teacher.userUid.ifBlank { teacher.id }
                 val tLogs = logs.filter { it.actorUid == uid }
-                val tMarks = tLogs.count { it.actionType == "MARKS_SAVED" }
+                val tMarks = tLogs.count { it.actionType == "MARKS_SAVED" || it.actionType == "REMARKS_SAVED" }
                 val tTotals = tLogs.count { it.actionType == "TOTAL_MARKS_UPDATED" }
+                val tStudents = tLogs.count { it.actionType.startsWith("STUDENT_") }
+                val tExams = tLogs.count { it.actionType.startsWith("EXAM_") }
                 val latestTime = tLogs.firstOrNull()?.let { formatActivityTime(it) } ?: "No activity yet"
                 val classNames = teacher.assignedClassIds.mapNotNull { snapshot.classesById[it]?.name }
                 val isSelected = selectedTeacherUid == uid
@@ -255,9 +269,10 @@ fun TeacherActivityScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Marks: $tMarks  •  Total Marks Edits: $tTotals",
+                                text = "Marks: $tMarks • Totals: $tTotals • Students: $tStudents • Exams: $tExams",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f)
                             )
                             Text(
                                 text = latestTime,
@@ -306,16 +321,28 @@ fun TeacherActivityScreen(
                             modifier = Modifier.testTag("activity_filter_all")
                         )
                         FilterChip(
-                            selected = selectedActionFilter == "MARKS_SAVED",
-                            onClick = { selectedActionFilter = "MARKS_SAVED" },
-                            label = { Text("Marks Entered ($marksSavedCount)") },
+                            selected = selectedActionFilter == "MARKS",
+                            onClick = { selectedActionFilter = "MARKS" },
+                            label = { Text("Marks ($marksSavedCount)") },
                             modifier = Modifier.testTag("activity_filter_marks")
                         )
                         FilterChip(
-                            selected = selectedActionFilter == "TOTAL_MARKS_UPDATED",
-                            onClick = { selectedActionFilter = "TOTAL_MARKS_UPDATED" },
-                            label = { Text("Total Marks Edited ($totalMarksEditedCount)") },
+                            selected = selectedActionFilter == "TOTALS",
+                            onClick = { selectedActionFilter = "TOTALS" },
+                            label = { Text("Total Marks ($totalMarksEditedCount)") },
                             modifier = Modifier.testTag("activity_filter_totals")
+                        )
+                        FilterChip(
+                            selected = selectedActionFilter == "STUDENTS",
+                            onClick = { selectedActionFilter = "STUDENTS" },
+                            label = { Text("Students ($studentsChangedCount)") },
+                            modifier = Modifier.testTag("activity_filter_students")
+                        )
+                        FilterChip(
+                            selected = selectedActionFilter == "EXAMS",
+                            onClick = { selectedActionFilter = "EXAMS" },
+                            label = { Text("Exams ($examsChangedCount)") },
+                            modifier = Modifier.testTag("activity_filter_exams")
                         )
                     }
                 }
@@ -366,10 +393,17 @@ fun ActivityLogCard(
     log: ActivityLog,
     modifier: Modifier = Modifier
 ) {
-    val isTotalEdit = log.actionType == "TOTAL_MARKS_UPDATED"
-    val accent = if (isTotalEdit) EducatorsBlue else EmeraldPass
-    val badgeBg = if (isTotalEdit) EducatorsBlueSurface else EmeraldPassContainer
-    val actionLabel = if (isTotalEdit) "Total Marks Edited" else "Marks Saved"
+    val (accent, badgeBg, actionLabel, icon) = when (log.actionType) {
+        "TOTAL_MARKS_UPDATED" -> QuadStyle(EducatorsBlue, EducatorsBlueSurface, "Total Marks Edited", Icons.Default.Tune)
+        "STUDENT_ADDED" -> QuadStyle(EmeraldPass, EmeraldPassContainer, "Student Added", Icons.Default.People)
+        "STUDENT_UPDATED" -> QuadStyle(EducatorsBlue, EducatorsBlueSurface, "Student Updated", Icons.Default.People)
+        "STUDENT_DELETED" -> QuadStyle(CrimsonFail, CrimsonFailContainer, "Student Removed", Icons.Default.People)
+        "EXAM_CREATED" -> QuadStyle(AmberPending, AmberPendingContainer, "Exam Created", Icons.AutoMirrored.Filled.Assignment)
+        "EXAM_UPDATED" -> QuadStyle(EducatorsBlue, EducatorsBlueSurface, "Exam Updated", Icons.AutoMirrored.Filled.Assignment)
+        "EXAM_DELETED" -> QuadStyle(CrimsonFail, CrimsonFailContainer, "Exam Deleted", Icons.AutoMirrored.Filled.Assignment)
+        "REMARKS_SAVED" -> QuadStyle(EmeraldPass, EmeraldPassContainer, "Remarks Saved", Icons.Default.EditNote)
+        else -> QuadStyle(EmeraldPass, EmeraldPassContainer, "Marks Saved", Icons.Default.EditNote)
+    }
 
     Card(
         shape = RoundedCornerShape(14.dp),
@@ -398,7 +432,7 @@ fun ActivityLogCard(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = if (isTotalEdit) Icons.Default.Tune else Icons.Default.EditNote,
+                            imageVector = icon,
                             contentDescription = null,
                             tint = accent,
                             modifier = Modifier.size(18.dp)
@@ -481,6 +515,13 @@ fun ActivityLogCard(
         }
     }
 }
+
+private data class QuadStyle(
+    val accent: Color,
+    val badgeBg: Color,
+    val label: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector
+)
 
 fun formatActivityTime(log: ActivityLog): String {
     val date: Date = log.createdAt?.toDate() ?: return "Just now"

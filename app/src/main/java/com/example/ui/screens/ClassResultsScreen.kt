@@ -307,7 +307,8 @@ fun ClassResultsScreen(
                             summaries = filteredSummaries,
                             address = snapshot.campus.address,
                             contact = snapshot.campus.contact,
-                            examComponents = examComponents
+                            examComponents = examComponents,
+                            secondaryLogoBase64 = snapshot.campus.secondaryLogoBase64
                         )
                         pendingSaveFile = file
                         savePdfLauncher.launch(file.name)
@@ -354,56 +355,70 @@ fun ClassResultsScreen(
             ) {
                 Column(modifier = Modifier.fillMaxSize()) {
                     // Consolidated Sheet Document Header Banner
-                    Column(
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(Color(0xFFF8FAFC))
                             .padding(horizontal = 12.dp, vertical = 10.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(
-                            text = snapshot.campus.schoolName.uppercase(),
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
-                            color = SheetTeal,
-                            textAlign = TextAlign.Center
-                        )
-                        Text(
-                            text = snapshot.campus.campusName.uppercase(),
-                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                            color = SheetTeal,
-                            textAlign = TextAlign.Center
-                        )
-                        if (snapshot.campus.address.isNotBlank()) {
+                        SchoolLogoBadge(logoBase64 = snapshot.campus.logoBase64, sizeDp = 40, paddingDp = 2)
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(horizontal = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
                             Text(
-                                text = "Address: ${snapshot.campus.address}",
-                                style = MaterialTheme.typography.labelSmall,
+                                text = snapshot.campus.schoolName.uppercase(),
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                color = SheetTeal,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = snapshot.campus.campusName.uppercase(),
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                color = SheetTeal,
+                                textAlign = TextAlign.Center
+                            )
+                            if (snapshot.campus.address.isNotBlank()) {
+                                Text(
+                                    text = "Address: ${snapshot.campus.address}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SheetTeal,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                            if (snapshot.campus.contact.isNotBlank()) {
+                                Text(
+                                    text = "Contact: ${snapshot.campus.contact}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SheetTeal,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "Consolidated Sheet",
+                                style = MaterialTheme.typography.titleSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    textDecoration = TextDecoration.Underline
+                                ),
+                                color = SheetTeal,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = "$className - $sectionLabel *** ${examName.uppercase()}",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                 color = SheetTeal,
                                 textAlign = TextAlign.Center
                             )
                         }
-                        if (snapshot.campus.contact.isNotBlank()) {
-                            Text(
-                                text = "Contact: ${snapshot.campus.contact}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SheetTeal,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = "Consolidated Sheet",
-                            style = MaterialTheme.typography.titleSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                textDecoration = TextDecoration.Underline
-                            ),
-                            color = SheetTeal,
-                            textAlign = TextAlign.Center
-                        )
-                        Text(
-                            text = "$className - $sectionLabel *** ${examName.uppercase()}",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            color = SheetTeal,
-                            textAlign = TextAlign.Center
+                        OptionalCornerLogo(
+                            logoBase64 = snapshot.campus.secondaryLogoBase64,
+                            sizeDp = 40,
+                            paddingDp = 2
                         )
                     }
 

@@ -206,7 +206,8 @@ fun ResultCardsScreen(
                         campusName = snapshot.campus.campusName,
                         schoolLogoBase64 = snapshot.campus.logoBase64,
                         address = snapshot.campus.address,
-                        contact = snapshot.campus.contact
+                        contact = snapshot.campus.contact,
+                        secondaryLogoBase64 = snapshot.campus.secondaryLogoBase64
                     )
                     pendingSaveFile = file
                     createPdfLauncher.launch("All_Progress_Reports_${snapshot.classesById[selectedClassId]?.name ?: "Class"}.pdf")
@@ -284,7 +285,8 @@ fun ResultCardsScreen(
                             campusName = snapshot.campus.campusName,
                             schoolLogoBase64 = snapshot.campus.logoBase64,
                             address = snapshot.campus.address,
-                            contact = snapshot.campus.contact
+                            contact = snapshot.campus.contact,
+                            secondaryLogoBase64 = snapshot.campus.secondaryLogoBase64
                         )
                         pendingSaveFile = file
                         createPdfLauncher.launch(file.name)
@@ -309,7 +311,8 @@ fun ResultCardsScreen(
                             campusName = snapshot.campus.campusName,
                             schoolLogoBase64 = snapshot.campus.logoBase64,
                             address = snapshot.campus.address,
-                            contact = snapshot.campus.contact
+                            contact = snapshot.campus.contact,
+                            secondaryLogoBase64 = snapshot.campus.secondaryLogoBase64
                         )
                         PdfReportGenerator.printPdfFile(context, file, "ProgressReport_${selectedSummary.student.name}")
                     },
@@ -337,7 +340,8 @@ fun ResultCardsScreen(
                             campusName = snapshot.campus.campusName,
                             schoolLogoBase64 = snapshot.campus.logoBase64,
                             address = snapshot.campus.address,
-                            contact = snapshot.campus.contact
+                            contact = snapshot.campus.contact,
+                            secondaryLogoBase64 = snapshot.campus.secondaryLogoBase64
                         )
                         FileExportHelper.shareFile(context, file, "application/pdf", "Share Progress Report PDF")
                     },
@@ -482,10 +486,20 @@ private fun ProgressReportPreview(
                         color = Color.White
                     )
                 }
-                if (!summary.student.photoBase64.isNullOrBlank()) {
-                    StudentAvatar(photoBase64 = summary.student.photoBase64, name = summary.student.name, sizeDp = 44)
-                } else {
-                    SchoolLogoBadge(logoBase64 = snapshot.campus.logoBase64, sizeDp = 44, paddingDp = 2)
+                when {
+                    !snapshot.campus.secondaryLogoBase64.isNullOrBlank() -> {
+                        OptionalCornerLogo(
+                            logoBase64 = snapshot.campus.secondaryLogoBase64,
+                            sizeDp = 44,
+                            paddingDp = 2
+                        )
+                    }
+                    !summary.student.photoBase64.isNullOrBlank() -> {
+                        StudentAvatar(photoBase64 = summary.student.photoBase64, name = summary.student.name, sizeDp = 44)
+                    }
+                    else -> {
+                        Spacer(Modifier.size(44.dp))
+                    }
                 }
             }
 

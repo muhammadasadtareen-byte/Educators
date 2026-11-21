@@ -96,6 +96,7 @@ data class Campus(
     val contact: String = "",
     val studentEntryFields: List<String> = StudentEntryField.defaultOptionalFields,
     val logoBase64: String? = null,
+    val secondaryLogoBase64: String? = null,
     val activeSessionId: String = "",
     val activeExamId: String = "",
     val allowDecimalMarks: Boolean = true,

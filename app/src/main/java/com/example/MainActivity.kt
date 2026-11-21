@@ -133,7 +133,7 @@ private data class NavDestination(
 
 private val ALL_DESTINATIONS = listOf(
     NavDestination(AppRoute.DASHBOARD, "Dashboard", Icons.Default.Dashboard),
-    NavDestination(AppRoute.STUDENTS, "Student Management", Icons.Default.People, adminOnly = true),
+    NavDestination(AppRoute.STUDENTS, "Student Management", Icons.Default.People),
     NavDestination(AppRoute.CLASSES, "Class Management", Icons.Default.Class, adminOnly = true),
     NavDestination(AppRoute.SUBJECTS, "Subject Management", Icons.Default.MenuBook, adminOnly = true),
     NavDestination(AppRoute.MARKS_ENTRY, "Marks Entry", Icons.Default.EditNote),
@@ -275,6 +275,29 @@ private fun MainAdaptiveShell(
             }
             launchSingleTop = true
             restoreState = true
+        }
+    }
+
+    // Never leave a teacher on an admin-only route (e.g. after switching role or deep navigation)
+    LaunchedEffect(snapshot.effectiveRole, currentRoute) {
+        val currentIsAdminOnly = ALL_DESTINATIONS.firstOrNull { it.route == currentRoute }?.adminOnly == true
+        if (snapshot.effectiveRole == StaffRole.TEACHER && currentIsAdminOnly) {
+            navigateTo(AppRoute.DASHBOARD)
+        }
+    }
+
+    // If an invited teacher is still on their solo auto-created personal workspace,
+    // immediately switch them into the shared school campus so they never see an Admin portal.
+    LaunchedEffect(snapshot.campus.id, snapshot.accessibleCampuses, snapshot.staff.size) {
+        val isSoloPersonalCampus = snapshot.campus.ownerId == viewModel.currentUserId && snapshot.staff.size <= 1
+        val sharedCampus = snapshot.accessibleCampuses.firstOrNull {
+            it.id != snapshot.campus.id && it.ownerId != viewModel.currentUserId
+        }
+        if (isSoloPersonalCampus && sharedCampus != null) {
+            viewModel.switchCampus(
+                sharedCampus.id,
+                "${sharedCampus.schoolName} (${sharedCampus.campusName})"
+            )
         }
     }
 

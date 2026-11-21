@@ -90,20 +90,16 @@ class SchoolRepository(
                     ?: runCatching { campusDoc(activeId).get().await() }.getOrNull()
                 if (activeCampusDoc != null && activeCampusDoc.exists()) {
                     val isOwnCampus = activeCampusDoc.getString("ownerId") == uid
-                    // If user was invited to a shared school campus and their auto-created personal
-                    // workspace has no classes or students yet, switch them to the shared campus automatically.
+                    // If user was invited to a shared school campus and their personal workspace
+                    // is just a solo auto-created campus (no other staff), always switch them to
+                    // the shared school campus so teachers never land in a personal Admin portal.
                     if (isOwnCampus && invitedCampusDoc != null) {
-                        val ownClasses = campusDoc(activeId).collection("classes")
+                        val ownStaff = campusDoc(activeId).collection("staff")
                             .whereArrayContains("memberUids", uid)
-                            .limit(1)
+                            .limit(2)
                             .get()
                             .await()
-                        val ownStudents = campusDoc(activeId).collection("students")
-                            .whereArrayContains("memberUids", uid)
-                            .limit(1)
-                            .get()
-                            .await()
-                        if (ownClasses.isEmpty && ownStudents.isEmpty) {
+                        if (ownStaff.size() <= 1) {
                             userRef.update(
                                 mapOf(
                                     "email" to email.take(120),
@@ -383,7 +379,8 @@ class SchoolRepository(
         allowDecimalMarks: Boolean,
         activeSessionId: String,
         activeExamId: String,
-        logoBase64: String?
+        logoBase64: String?,
+        secondaryLogoBase64: String? = campus.secondaryLogoBase64
     ): Result<Unit> {
         val path = campusDoc(campus.id).path
         return try {
@@ -397,6 +394,7 @@ class SchoolRepository(
                 "allowDecimalMarks" to allowDecimalMarks,
                 "activeSessionId" to activeSessionId,
                 "activeExamId" to activeExamId,
+                "secondaryLogoBase64" to (secondaryLogoBase64?.trim() ?: ""),
                 "updatedAt" to FieldValue.serverTimestamp()
             )
             if (!logoBase64.isNullOrBlank()) {

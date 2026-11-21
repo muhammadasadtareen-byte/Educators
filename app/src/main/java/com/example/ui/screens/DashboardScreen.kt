@@ -176,20 +176,18 @@ fun DashboardScreen(
                                 Spacer(Modifier.width(6.dp))
                                 Text("Smart Marks Entry")
                             }
-                            if (snapshot.effectiveRole == StaffRole.ADMIN) {
-                                OutlinedButton(
-                                    onClick = { onNavigate(AppRoute.STUDENTS) },
-                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.7f)),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                                    shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier
-                                        .heightIn(min = 48.dp)
-                                        .testTag("dashboard_students_btn")
-                                ) {
-                                    Icon(Icons.Default.People, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Students")
-                                }
+                            OutlinedButton(
+                                onClick = { onNavigate(AppRoute.STUDENTS) },
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.7f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .testTag("dashboard_students_btn")
+                            ) {
+                                Icon(Icons.Default.People, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (snapshot.effectiveRole == StaffRole.ADMIN) "Students" else "My Students")
                             }
                         }
                     }
@@ -290,24 +288,24 @@ fun DashboardScreen(
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     StatMetricCard(
-                        title = if (isAdminRole) "Total Students" else "Assigned Students",
+                        title = if (isAdminRole) "Total Students" else "My Students",
                         value = snapshot.visibleStudents.size.toString(),
-                        subtitle = "Active session",
+                        subtitle = if (isAdminRole) "Active session" else "Assigned class(es)",
                         icon = Icons.Default.People,
                         accentColor = EducatorsBlue,
                         containerColor = EducatorsBlueSurface,
                         modifier = Modifier.weight(1f),
-                        onClick = if (isAdminRole) ({ onNavigate(AppRoute.STUDENTS) }) else ({ onNavigate(AppRoute.MARKS_ENTRY) })
+                        onClick = { onNavigate(AppRoute.STUDENTS) }
                     )
                     StatMetricCard(
                         title = if (isAdminRole) "Total Classes" else "Assigned Classes",
                         value = snapshot.visibleClasses.size.toString(),
-                        subtitle = if (isAdminRole) "${snapshot.sections.size} sections" else "Assigned to you",
+                        subtitle = if (isAdminRole) "${snapshot.sections.size} sections" else "Allotted to you",
                         icon = Icons.Default.Class,
                         accentColor = EducatorsNavy,
                         containerColor = EducatorsBlueSurface,
                         modifier = Modifier.weight(1f),
-                        onClick = if (isAdminRole) ({ onNavigate(AppRoute.CLASSES) }) else ({ onNavigate(AppRoute.MARKS_ENTRY) })
+                        onClick = if (isAdminRole) ({ onNavigate(AppRoute.CLASSES) }) else ({ onNavigate(AppRoute.STUDENTS) })
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -355,11 +353,11 @@ fun DashboardScreen(
         }
         item {
             val navItems = buildList {
+                add(Triple("Students", Icons.Default.People, AppRoute.STUDENTS))
                 add(Triple("Marks Entry", Icons.Default.EditNote, AppRoute.MARKS_ENTRY))
                 add(Triple("Result Cards", Icons.Default.Badge, AppRoute.RESULT_CARDS))
                 add(Triple("Class Results", Icons.Default.Assessment, AppRoute.CLASS_RESULTS))
                 if (isAdminRole) {
-                    add(Triple("Students", Icons.Default.People, AppRoute.STUDENTS))
                     add(Triple("Classes", Icons.Default.Class, AppRoute.CLASSES))
                     add(Triple("Subjects", Icons.Default.MenuBook, AppRoute.SUBJECTS))
                     add(Triple("Activity Log", Icons.Default.History, AppRoute.TEACHER_ACTIVITY))
@@ -522,7 +520,7 @@ fun DashboardScreen(
                     icon = Icons.AutoMirrored.Filled.Assignment,
                     title = if (isTeacherRole) "No Classes Assigned Yet" else "No Classes Configured Yet",
                     description = if (isTeacherRole) {
-                        "Ask your campus Admin to open Settings → Staff Accounts, tap Edit next to your name, and assign your classes (e.g., Class 8)."
+                        "Your school administrator has not allotted a class to your account yet. Once assigned, your class students, exams, and marks will appear here automatically."
                     } else {
                         "Create classes (Playgroup through Class 10) and subjects to start enrolling students and entering marks."
                     },
