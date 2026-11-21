@@ -84,11 +84,11 @@ data class SchoolSnapshot(
                 (effectiveRole == StaffRole.ADMIN || st.classId in assignedClassIds)
         }
 
+    val sessionMarks: List<MarkEntry> =
+        marks.filter { selectedSessionId.isBlank() || it.sessionId == selectedSessionId }
+
     val activeExamMarks: List<MarkEntry> =
-        marks.filter {
-            (selectedSessionId.isBlank() || it.sessionId == selectedSessionId) &&
-                (selectedExamId.isBlank() || it.examId == selectedExamId)
-        }
+        sessionMarks.filter { selectedExamId.isBlank() || it.examId == selectedExamId }
 
     val activeResultRecords: List<ResultRecord> =
         resultRecords.filter {
@@ -105,7 +105,9 @@ data class SchoolSnapshot(
         sectionsById = sectionsById,
         sessionsById = sessionsById,
         examination = selectedExam,
-        allGradingRules = gradingRules
+        allGradingRules = gradingRules,
+        allExaminations = examinations,
+        allSessionMarks = sessionMarks
     )
 
     val completedResultCount: Int = allStudentSummaries.count { it.status == ResultStatus.COMPLETE }
@@ -460,9 +462,20 @@ class MainViewModel(
         subject: Subject,
         obtainedMarks: Double,
         existingMark: MarkEntry?,
-        componentMarks: Map<String, Double> = emptyMap()
+        componentMarks: Map<String, Double> = emptyMap(),
+        maxAllowedMarks: Double = subject.maxMarks
     ): Result<Unit> {
-        return repository.saveMarkEntry(campus, sessionId, examId, student, subject, obtainedMarks, existingMark, componentMarks)
+        return repository.saveMarkEntry(
+            campus = campus,
+            sessionId = sessionId,
+            examId = examId,
+            student = student,
+            subject = subject,
+            obtainedMarks = obtainedMarks,
+            existingMark = existingMark,
+            componentMarks = componentMarks,
+            maxAllowedMarks = maxAllowedMarks
+        )
     }
 
     fun saveTeacherRemarks(

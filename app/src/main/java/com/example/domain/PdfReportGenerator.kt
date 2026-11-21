@@ -124,7 +124,9 @@ object PdfReportGenerator {
         val chunks = if (summaries.isEmpty()) listOf(emptyList()) else summaries.chunked(rowsPerPage)
         val totalPages = chunks.size
         val useComponents = examComponents.isNotEmpty() && sortedSubjects.isNotEmpty()
-        val totalMax = sortedSubjects.sumOf { it.maxMarks }
+        val compTotal = examComponents.sumOf { it.maxMarks }
+        val totalMax = summaries.firstOrNull()?.totalMaxMarks
+            ?: sortedSubjects.sumOf { if (useComponents && compTotal > 0.0) compTotal else it.maxMarks }
 
         chunks.forEachIndexed { pageIdx, pageRows ->
             val pageInfo = PdfDocument.PageInfo.Builder(A4_LANDSCAPE_WIDTH, A4_LANDSCAPE_HEIGHT, pageIdx + 1).create()
@@ -316,7 +318,7 @@ object PdfReportGenerator {
                         sortedSubjects.forEach { sub ->
                             val sr = summary.subjectResults.firstOrNull { it.subject.id == sub.id }
                             examComponents.forEach { comp ->
-                                val compMark = sr?.markEntry?.componentMarks?.get(comp.id)
+                                val compMark = sr?.resolvedComponentMarks?.get(comp.id)
                                 add(compMark?.let { ResultCalculator.formatMarks(it) } ?: "-")
                             }
                         }
@@ -385,6 +387,12 @@ object PdfReportGenerator {
         val chunks = if (summaries.isEmpty()) listOf(emptyList()) else summaries.chunked(24)
         val totalPages = chunks.size
 
+        val effectiveMax = summaries.firstOrNull()
+            ?.subjectResults
+            ?.firstOrNull { it.subject.id == subject.id }
+            ?.effectiveMaxMarks
+            ?: subject.maxMarks
+
         chunks.forEachIndexed { pageIdx, pageRows ->
             val pageInfo = PdfDocument.PageInfo.Builder(A4_WIDTH, A4_HEIGHT, pageIdx + 1).create()
             val page = doc.startPage(pageInfo)
@@ -395,7 +403,7 @@ object PdfReportGenerator {
                 schoolName,
                 campusName,
                 "SUBJECT MARKS SHEET — ${subject.name.uppercase()}",
-                "$className ($sectionName) | $examName | $sessionName | Max: ${ResultCalculator.formatMarks(subject.maxMarks)}",
+                "$className ($sectionName) | $examName | $sessionName | Max: ${ResultCalculator.formatMarks(effectiveMax)}",
                 logoBitmap
             )
 
@@ -411,7 +419,7 @@ object PdfReportGenerator {
                     summary.student.rollNumber.ifBlank { "-" },
                     summary.student.name.take(24),
                     summary.student.fatherName.takeIf { it.isNotBlank() && it != "-" }?.take(20) ?: "",
-                    ResultCalculator.formatMarks(subject.maxMarks),
+                    ResultCalculator.formatMarks(sr?.effectiveMaxMarks ?: effectiveMax),
                     sr?.obtainedMarks?.let { ResultCalculator.formatMarks(it) } ?: "Pending",
                     sr?.percentage?.let { String.format(Locale.US, "%.1f%%", it) } ?: "-",
                     sr?.grade ?: "-"
@@ -752,7 +760,7 @@ object PdfReportGenerator {
             val rowCells = buildList {
                 add(sr.subject.name + if (sr.passed == false && sr.subject.compulsory) " *" else "")
                 components.forEach { comp ->
-                    val compVal = sr.markEntry?.componentMarks?.get(comp.id)
+                    val compVal = sr.resolvedComponentMarks[comp.id]
                     add(compVal?.let { ResultCalculator.formatMarks(it) } ?: "-")
                 }
                 add(sr.obtainedMarks?.let { ResultCalculator.formatMarks(it) } ?: "-")
@@ -926,7 +934,7 @@ object PdfReportGenerator {
         val components = summary.examComponents
         // Compute Y max dynamically cleanly (e.g., max of subject maxMarks, obtained, highest)
         val rawMax = summary.subjectResults.maxOfOrNull { sr ->
-            maxOf(sr.subject.maxMarks, sr.obtainedMarks ?: 0.0, sr.highestMarksInClass ?: 0.0)
+            maxOf(sr.effectiveMaxMarks, sr.obtainedMarks ?: 0.0, sr.highestMarksInClass ?: 0.0)
         }?.coerceAtLeast(10.0) ?: 100.0
         val ySteps = 5
         val yMax = (ceil(rawMax / 10.0) * 10.0).coerceAtLeast(10.0)
@@ -970,7 +978,7 @@ object PdfReportGenerator {
 
                 val barValues = buildList {
                     components.forEachIndexed { cIdx, comp ->
-                        add((sr.markEntry?.componentMarks?.get(comp.id) ?: 0.0) to chartPalette[cIdx % 4])
+                        add((sr.resolvedComponentMarks[comp.id] ?: 0.0) to chartPalette[cIdx % 4])
                     }
                     add((sr.obtainedMarks ?: 0.0) to chartPalette[4])
                     add((sr.highestMarksInClass ?: 0.0) to chartPalette[5])

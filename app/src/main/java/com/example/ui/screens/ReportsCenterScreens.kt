@@ -585,6 +585,7 @@ fun ExcelCenterScreen(
         ExamEditorDialog(
             existing = target,
             sessions = snapshot.sessions,
+            availableExams = snapshot.examinations,
             defaultSessionId = snapshot.selectedSessionId,
             defaultSortOrder = target.sortOrder,
             canDelete = snapshot.examinations.size > 1,
@@ -613,6 +614,7 @@ fun ExcelCenterScreen(
         ExamEditorDialog(
             existing = null,
             sessions = snapshot.sessions,
+            availableExams = snapshot.examinations,
             defaultSessionId = snapshot.selectedSessionId,
             defaultSortOrder = (snapshot.examinations.maxOfOrNull { it.sortOrder } ?: 0L) + 1L,
             canDelete = false,
@@ -981,6 +983,7 @@ fun PdfCenterScreen(
         ExamEditorDialog(
             existing = target,
             sessions = snapshot.sessions,
+            availableExams = snapshot.examinations,
             defaultSessionId = snapshot.selectedSessionId,
             defaultSortOrder = target.sortOrder,
             canDelete = snapshot.examinations.size > 1,
@@ -1009,6 +1012,7 @@ fun PdfCenterScreen(
         ExamEditorDialog(
             existing = null,
             sessions = snapshot.sessions,
+            availableExams = snapshot.examinations,
             defaultSessionId = snapshot.selectedSessionId,
             defaultSortOrder = (snapshot.examinations.maxOfOrNull { it.sortOrder } ?: 0L) + 1L,
             canDelete = false,

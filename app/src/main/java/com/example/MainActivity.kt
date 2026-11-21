@@ -91,6 +91,7 @@ import com.example.ui.screens.ExcelCenterScreen
 import com.example.ui.screens.MarksEntryScreen
 import com.example.ui.screens.PdfCenterScreen
 import com.example.ui.screens.ResultCardsScreen
+import com.example.ui.screens.SchoolLogoBadge
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.StatusPill
 import com.example.ui.screens.StudentsScreen
@@ -392,16 +393,28 @@ private fun DrawerContentBody(
             .verticalScroll(rememberScrollState())
             .padding(12.dp)
     ) {
-        Text(
-            text = snapshot.campus.schoolName,
-            style = MaterialTheme.typography.titleMedium,
-            color = EducatorsNavy
-        )
-        Text(
-            text = snapshot.campus.campusName,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            SchoolLogoBadge(
+                logoBase64 = snapshot.campus.logoBase64,
+                sizeDp = 42,
+                paddingDp = 3
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = snapshot.campus.schoolName,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = EducatorsNavy
+                )
+                Text(
+                    text = snapshot.campus.campusName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
         Spacer(Modifier.height(6.dp))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatusPill(

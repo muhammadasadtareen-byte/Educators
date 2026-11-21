@@ -330,8 +330,13 @@ fun ClassResultsScreen(
             )
         } else {
             val hScroll = rememberScrollState()
-            val totalMax = classSubjects.sumOf { it.maxMarks }
             val useComponents = examComponents.isNotEmpty() && classSubjects.isNotEmpty()
+            val totalMax = filteredSummaries.firstOrNull()?.totalMaxMarks
+                ?: if (useComponents) {
+                    classSubjects.size * examComponents.sumOf { it.maxMarks }
+                } else {
+                    classSubjects.sumOf { it.maxMarks }
+                }
 
             val nameColW = 138.dp
             val compColW = 82.dp
@@ -502,7 +507,7 @@ fun ClassResultsScreen(
                                     classSubjects.forEach { sub ->
                                         val sr = s.subjectResults.firstOrNull { it.subject.id == sub.id }
                                         examComponents.forEach { comp ->
-                                            val compVal = sr?.markEntry?.componentMarks?.get(comp.id)
+                                            val compVal = sr?.resolvedComponentMarks?.get(comp.id)
                                             SheetBodyBox(
                                                 text = compVal?.let { ResultCalculator.formatMarks(it) } ?: "-",
                                                 width = compColW,
@@ -565,6 +570,7 @@ fun ClassResultsScreen(
         ExamEditorDialog(
             existing = target,
             sessions = snapshot.sessions,
+            availableExams = snapshot.examinations,
             defaultSessionId = snapshot.selectedSessionId,
             defaultSortOrder = target.sortOrder,
             canDelete = snapshot.examinations.size > 1,
@@ -593,6 +599,7 @@ fun ClassResultsScreen(
         ExamEditorDialog(
             existing = null,
             sessions = snapshot.sessions,
+            availableExams = snapshot.examinations,
             defaultSessionId = snapshot.selectedSessionId,
             defaultSortOrder = (snapshot.examinations.maxOfOrNull { it.sortOrder } ?: 0L) + 1L,
             canDelete = false,

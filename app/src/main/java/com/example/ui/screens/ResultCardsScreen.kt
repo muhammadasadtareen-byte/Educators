@@ -382,6 +382,7 @@ fun ResultCardsScreen(
         ExamEditorDialog(
             existing = target,
             sessions = snapshot.sessions,
+            availableExams = snapshot.examinations,
             defaultSessionId = snapshot.selectedSessionId,
             defaultSortOrder = target.sortOrder,
             canDelete = snapshot.examinations.size > 1,
@@ -410,6 +411,7 @@ fun ResultCardsScreen(
         ExamEditorDialog(
             existing = null,
             sessions = snapshot.sessions,
+            availableExams = snapshot.examinations,
             defaultSessionId = snapshot.selectedSessionId,
             defaultSortOrder = (snapshot.examinations.maxOfOrNull { it.sortOrder } ?: 0L) + 1L,
             canDelete = false,
@@ -464,23 +466,7 @@ private fun ProgressReportPreview(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Surface(shape = CircleShape, color = Color.White, modifier = Modifier.size(44.dp)) {
-                    if (logoBitmap != null) {
-                        Image(
-                            bitmap = logoBitmap.asImageBitmap(),
-                            contentDescription = "School Logo",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize().clip(CircleShape)
-                        )
-                    } else {
-                        Image(
-                            painter = painterResource(id = R.drawable.img_school_crest),
-                            contentDescription = "School Crest",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize().clip(CircleShape)
-                        )
-                    }
-                }
+                SchoolLogoBadge(logoBase64 = snapshot.campus.logoBase64, sizeDp = 44, paddingDp = 2)
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -499,14 +485,7 @@ private fun ProgressReportPreview(
                 if (!summary.student.photoBase64.isNullOrBlank()) {
                     StudentAvatar(photoBase64 = summary.student.photoBase64, name = summary.student.name, sizeDp = 44)
                 } else {
-                    Surface(shape = CircleShape, color = Color.White, modifier = Modifier.size(44.dp)) {
-                        Image(
-                            painter = painterResource(id = R.drawable.img_school_crest),
-                            contentDescription = "School Crest",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize().clip(CircleShape)
-                        )
-                    }
+                    SchoolLogoBadge(logoBase64 = snapshot.campus.logoBase64, sizeDp = 44, paddingDp = 2)
                 }
             }
 
@@ -640,7 +619,7 @@ private fun ProgressReportPreview(
                             modifier = Modifier.fillMaxHeight()
                         )
                         components.forEach { comp ->
-                            val cMark = sr.markEntry?.componentMarks?.get(comp.id)
+                            val cMark = sr.resolvedComponentMarks[comp.id]
                             ReportCell(
                                 text = cMark?.let { ResultCalculator.formatMarks(it) } ?: "-",
                                 width = compColW,
@@ -895,7 +874,7 @@ private fun ProgressGroupedBarChart(summary: StudentResultSummary) {
     val maxScale = remember(summary) {
         val rawMax = maxOf(
             summary.subjectResults.maxOfOrNull { sr ->
-                maxOf(sr.obtainedMarks ?: 0.0, sr.highestMarksInClass ?: 0.0, sr.subject.maxMarks)
+                maxOf(sr.obtainedMarks ?: 0.0, sr.highestMarksInClass ?: 0.0, sr.effectiveMaxMarks)
             } ?: 100.0,
             10.0
         )
@@ -961,7 +940,7 @@ private fun ProgressGroupedBarChart(summary: StudentResultSummary) {
                     val gx = leftPad + gIdx * groupW + (groupW - groupBarsW) / 2f
                     val values = buildList {
                         components.forEach { c ->
-                            add(sr.markEntry?.componentMarks?.get(c.id) ?: 0.0)
+                            add(sr.resolvedComponentMarks[c.id] ?: 0.0)
                         }
                         add(sr.obtainedMarks ?: 0.0)
                         add(sr.highestMarksInClass ?: 0.0)

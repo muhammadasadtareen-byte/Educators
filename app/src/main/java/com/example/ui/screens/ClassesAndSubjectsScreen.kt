@@ -459,7 +459,12 @@ private fun SubjectFormDialog(
 ) {
     var name by remember { mutableStateOf(existing?.name ?: "") }
     var maxMarksText by remember { mutableStateOf(existing?.let { ResultCalculator.formatMarks(it.maxMarks) } ?: "100") }
-    var passingMarksText by remember { mutableStateOf(existing?.let { ResultCalculator.formatMarks(it.passingMarks) } ?: "40") }
+    var passingMarksText by remember {
+        mutableStateOf(
+            existing?.let { ResultCalculator.formatMarks(it.maxMarks * (ResultCalculator.PASSING_PERCENTAGE / 100.0)) } ?: "40"
+        )
+    }
+    var passManuallyEdited by remember { mutableStateOf(false) }
     var compulsory by remember { mutableStateOf(existing?.compulsory ?: true) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
@@ -478,7 +483,13 @@ private fun SubjectFormDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = maxMarksText,
-                        onValueChange = { maxMarksText = it },
+                        onValueChange = { next ->
+                            maxMarksText = next
+                            val parsed = next.trim().toDoubleOrNull()
+                            if (!passManuallyEdited && parsed != null && parsed > 0.0) {
+                                passingMarksText = ResultCalculator.formatMarks(parsed * (ResultCalculator.PASSING_PERCENTAGE / 100.0))
+                            }
+                        },
                         label = { Text("Max Marks *") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         singleLine = true,
@@ -486,8 +497,11 @@ private fun SubjectFormDialog(
                     )
                     OutlinedTextField(
                         value = passingMarksText,
-                        onValueChange = { passingMarksText = it },
-                        label = { Text("Passing Marks *") },
+                        onValueChange = {
+                            passingMarksText = it
+                            passManuallyEdited = true
+                        },
+                        label = { Text("Passing (40%) *") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         singleLine = true,
                         modifier = Modifier.weight(1f).testTag("subject_pass_input")

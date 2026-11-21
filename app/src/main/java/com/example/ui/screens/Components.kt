@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -523,7 +524,8 @@ fun ExamEditorDialog(
         sortOrder: Long,
         components: List<ExamComponent>
     ) -> Unit,
-    onDelete: (() -> Unit)? = null
+    onDelete: (() -> Unit)? = null,
+    availableExams: List<Examination> = emptyList()
 ) {
     var name by remember(existing) { mutableStateOf(existing?.name ?: "") }
     var examType by remember(existing) { mutableStateOf(existing?.parsedExamType() ?: ExamType.MIDTERM) }
@@ -611,15 +613,21 @@ fun ExamEditorDialog(
 
                 HorizontalDivider()
 
-                // Assessment Components Section
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                // Assessment Components & Linked Terms Section
+                val linkableExams = remember(availableExams, existing?.id, sessionId) {
+                    availableExams.filter {
+                        it.id != existing?.id && (sessionId.isBlank() || it.sessionId == sessionId)
+                    }.sortedBy { it.sortOrder }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Assessment Components (Optional Breakdown)",
+                        text = "Assessments, Quizzes & Linked Term Weights",
                         style = MaterialTheme.typography.titleSmall,
                         color = EducatorsNavy
                     )
                     Text(
-                        text = "Define sub-columns per subject (e.g. Assessment Task 01 + Quiz, or Classwork + Quiz + Assessment-I + Assessment-II). Leave empty for single total marks.",
+                        text = "Join any quizzes/assessments with different total marks, or link earlier terms/assessments so a student's percentage automatically carries forward into this exam. Passing is 40%.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -639,7 +647,7 @@ fun ExamEditorDialog(
                                 components.clear()
                                 components.addAll(ExamComponentPresets.consolidatedTaskPreset())
                             },
-                            label = { Text("Task 01 (30) + Quiz (20)") }
+                            label = { Text("Task (30) + Quiz (20)") }
                         )
                         FilterChip(
                             selected = components.size == 4 && components.firstOrNull()?.id == "classwork",
@@ -652,57 +660,104 @@ fun ExamEditorDialog(
                     }
 
                     components.forEachIndexed { idx, comp ->
+                        val isLinked = comp.isCarryForward()
                         Surface(
                             shape = RoundedCornerShape(10.dp),
-                            color = EducatorsBlueSurface.copy(alpha = 0.45f),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                            color = if (isLinked) EmeraldPassContainer.copy(alpha = 0.55f) else EducatorsBlueSurface.copy(alpha = 0.45f),
+                            border = BorderStroke(1.dp, if (isLinked) EmeraldPass.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outline),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Row(
+                            Column(
                                 modifier = Modifier.padding(8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                OutlinedTextField(
-                                    value = comp.name,
-                                    onValueChange = { newName ->
-                                        components[idx] = comp.copy(name = newName)
-                                        errorMsg = null
-                                    },
-                                    label = { Text("Component Name") },
-                                    singleLine = true,
-                                    modifier = Modifier.weight(1.5f)
-                                )
-                                OutlinedTextField(
-                                    value = if (comp.maxMarks == 0.0) "" else ResultCalculator.formatMarks(comp.maxMarks),
-                                    onValueChange = { rawMax ->
-                                        val parsed = rawMax.trim().toDoubleOrNull() ?: 0.0
-                                        components[idx] = comp.copy(maxMarks = parsed)
-                                        errorMsg = null
-                                    },
-                                    label = { Text("Max") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                    singleLine = true,
-                                    modifier = Modifier.weight(0.75f)
-                                )
-                                IconButton(onClick = { components.removeAt(idx) }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Remove component", tint = CrimsonFail)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    StatusPill(
+                                        text = if (isLinked) "Auto Carry-Forward from Term" else "Manual Assessment / Quiz",
+                                        isPositive = isLinked,
+                                        isWarning = !isLinked
+                                    )
+                                    IconButton(
+                                        onClick = { components.removeAt(idx) },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Remove component", tint = CrimsonFail)
+                                    }
+                                }
+                                if (isLinked && linkableExams.isNotEmpty()) {
+                                    val pickedSource = linkableExams.firstOrNull { it.id == comp.sourceExamId }
+                                    SelectorDropdown(
+                                        label = "Source Term / Assessment",
+                                        selectedText = pickedSource?.name ?: "Select Term / Assessment",
+                                        items = linkableExams,
+                                        itemLabel = { it.name },
+                                        onSelect = { src ->
+                                            val defaultLbl = "${src.name} (%)"
+                                            components[idx] = comp.copy(
+                                                sourceExamId = src.id,
+                                                name = if (comp.name.isBlank() || comp.name.endsWith("(%)")) defaultLbl else comp.name
+                                            )
+                                            errorMsg = null
+                                        }
+                                    )
+                                }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = comp.name,
+                                        onValueChange = { newName ->
+                                            components[idx] = comp.copy(name = newName)
+                                            errorMsg = null
+                                        },
+                                        label = { Text(if (isLinked) "Column Label" else "Assessment / Quiz Name") },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1.45f)
+                                    )
+                                    OutlinedTextField(
+                                        value = if (comp.maxMarks == 0.0) "" else ResultCalculator.formatMarks(comp.maxMarks),
+                                        onValueChange = { rawMax ->
+                                            val parsed = rawMax.trim().toDoubleOrNull() ?: 0.0
+                                            components[idx] = comp.copy(
+                                                maxMarks = parsed,
+                                                weightPercentage = if (isLinked) parsed else 0.0
+                                            )
+                                            errorMsg = null
+                                        },
+                                        label = { Text(if (isLinked) "Weight / Marks" else "Total Marks") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        singleLine = true,
+                                        modifier = Modifier.weight(0.85f)
+                                    )
+                                }
+                                if (isLinked) {
+                                    val srcName = linkableExams.firstOrNull { it.id == comp.sourceExamId }?.name ?: "source term"
+                                    val sample80 = ResultCalculator.formatMarks(comp.maxMarks * 0.8)
+                                    Text(
+                                        text = "Auto-calculates student's % in $srcName × ${ResultCalculator.formatMarks(comp.maxMarks)} (e.g. 80% → $sample80/${ResultCalculator.formatMarks(comp.maxMarks)}).",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = EducatorsNavy
+                                    )
                                 }
                             }
                         }
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         OutlinedButton(
                             onClick = {
                                 components.add(
                                     ExamComponent(
                                         id = "comp_${System.nanoTime()}",
-                                        name = "Component ${components.size + 1}",
+                                        name = "Quiz / Assessment ${components.size + 1}",
                                         maxMarks = 10.0
                                     )
                                 )
@@ -711,15 +766,40 @@ fun ExamEditorDialog(
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Add Component")
+                            Text("Add Assessment / Quiz")
                         }
-                        if (components.isNotEmpty()) {
-                            Text(
-                                text = "Sum: ${ResultCalculator.formatMarks(components.sumOf { it.maxMarks })}",
-                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                color = EducatorsNavy
-                            )
+                        if (linkableExams.isNotEmpty()) {
+                            OutlinedButton(
+                                onClick = {
+                                    val defaultSrc = linkableExams.firstOrNull { src ->
+                                        components.none { it.sourceExamId == src.id }
+                                    } ?: linkableExams.first()
+                                    components.add(
+                                        ExamComponent(
+                                            id = "term_${System.nanoTime()}",
+                                            name = "${defaultSrc.name} (%)",
+                                            maxMarks = 20.0,
+                                            sourceExamId = defaultSrc.id,
+                                            weightPercentage = 20.0
+                                        )
+                                    )
+                                },
+                                modifier = Modifier.heightIn(min = 42.dp).testTag("add_linked_term_btn")
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Add Previous Term (%)")
+                            }
                         }
+                    }
+                    if (components.isNotEmpty()) {
+                        val totalSum = components.sumOf { it.maxMarks }
+                        val passAt40 = totalSum * 0.40
+                        Text(
+                            text = "Exam Total: ${ResultCalculator.formatMarks(totalSum)} marks  •  Passing (40%): ${ResultCalculator.formatMarks(passAt40)}",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = EducatorsNavy
+                        )
                     }
                 }
 
@@ -782,7 +862,9 @@ fun ExamEditorDialog(
                                 ExamComponent(
                                     id = c.id.ifBlank { "comp_${idx + 1}" },
                                     name = c.name.trim(),
-                                    maxMarks = c.maxMarks
+                                    maxMarks = c.maxMarks,
+                                    sourceExamId = c.sourceExamId.trim(),
+                                    weightPercentage = if (c.isCarryForward()) c.maxMarks else 0.0
                                 )
                             }
                             onSave(
@@ -805,6 +887,50 @@ fun ExamEditorDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+}
+
+@Composable
+fun SchoolLogoBadge(
+    logoBase64: String?,
+    sizeDp: Int = 44,
+    paddingDp: Int = 3
+) {
+    val bmp = remember(logoBase64) {
+        if (logoBase64.isNullOrBlank()) null
+        else try {
+            val bytes = Base64.decode(logoBase64, Base64.DEFAULT)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        } catch (_: Exception) {
+            null
+        }
+    }
+    Surface(
+        shape = CircleShape,
+        color = Color.White,
+        modifier = Modifier.size(sizeDp.dp)
+    ) {
+        if (bmp != null) {
+            androidx.compose.foundation.Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = "School logo",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingDp.dp)
+                    .clip(CircleShape)
+            )
+        } else {
+            androidx.compose.foundation.Image(
+                painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_school_crest),
+                contentDescription = "School crest",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingDp.dp)
+                    .clip(CircleShape)
+            )
+        }
+    }
 }
 
 @Composable

@@ -54,8 +54,12 @@ data class UserProfile(
 data class ExamComponent(
     val id: String = "",
     val name: String = "",
-    val maxMarks: Double = 0.0
-)
+    val maxMarks: Double = 0.0,
+    val sourceExamId: String = "",
+    val weightPercentage: Double = 0.0
+) {
+    fun isCarryForward(): Boolean = sourceExamId.isNotBlank()
+}
 
 object StudentEntryField {
     const val FATHER_NAME = "FATHER_NAME"
@@ -275,7 +279,10 @@ data class SubjectResult(
     val grade: String,
     val remarks: String,
     val passed: Boolean?,
-    val entered: Boolean
+    val entered: Boolean,
+    val effectiveMaxMarks: Double = subject.maxMarks,
+    val effectivePassingMarks: Double = (effectiveMaxMarks * 0.40),
+    val resolvedComponentMarks: Map<String, Double> = markEntry?.componentMarks ?: emptyMap()
 )
 
 data class StudentResultSummary(

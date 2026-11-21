@@ -441,11 +441,18 @@ class SchoolRepository(
                 val cleanId = c.id.trim().ifBlank { "comp_${idx + 1}" }
                     .replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
                     .take(40)
-                mapOf(
+                val cleanMax = c.maxMarks.coerceIn(0.0, 1000.0)
+                val map = mutableMapOf<String, Any>(
                     "id" to cleanId,
                     "name" to c.name.trim().take(60),
-                    "maxMarks" to c.maxMarks.coerceIn(0.0, 1000.0)
+                    "maxMarks" to cleanMax
                 )
+                val cleanSource = c.sourceExamId.trim().take(128)
+                if (cleanSource.isNotEmpty()) {
+                    map["sourceExamId"] = cleanSource
+                    map["weightPercentage"] = (if (c.weightPercentage > 0.0) c.weightPercentage else cleanMax).coerceIn(0.0, 100.0)
+                }
+                map
             }
     }
 
@@ -963,14 +970,16 @@ class SchoolRepository(
         subject: Subject,
         obtainedMarks: Double,
         existingMark: MarkEntry?,
-        componentMarks: Map<String, Double> = emptyMap()
+        componentMarks: Map<String, Double> = emptyMap(),
+        maxAllowedMarks: Double = subject.maxMarks
     ): Result<Unit> {
         val markId = deterministicMarkId(sessionId, examId, student.id, subject.id)
         val ref = campusDoc(campus.id).collection("marks").document(markId)
         return try {
             val uid = requireUserId()
-            require(obtainedMarks in 0.0..subject.maxMarks) {
-                "Obtained marks must be between 0 and ${subject.maxMarks}"
+            val ceiling = maxAllowedMarks.coerceIn(0.0, 1000.0)
+            require(obtainedMarks in 0.0..ceiling) {
+                "Obtained marks must be between 0 and ${ResultCalculator.formatMarks(ceiling)}"
             }
             val cleanCompMarks = componentMarks
                 .filterKeys { it.isNotBlank() }

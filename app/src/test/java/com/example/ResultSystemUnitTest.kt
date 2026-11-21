@@ -517,6 +517,184 @@ class ResultSystemUnitTest {
         assertEquals("", preview.validRows.first().admissionNumber)
     }
 
+    @Test
+    fun `term with joined quizzes and different total marks enforces 40 percent passing threshold`() {
+        // Subject default max is 100, but Term 1 Assessment joins Quiz (10) + Assessment-I (15) = 25 marks!
+        // 40% of 25 = 10.0 marks -> 10.0 PASS, 9.5 (38%) FAIL.
+        val term1 = Examination(
+            id = "exam_term1",
+            sessionId = "sess_1",
+            name = "Term 1 Assessment",
+            examType = ExamType.MONTHLY_TEST.name,
+            components = listOf(
+                com.example.data.model.ExamComponent("quiz", "Quiz", 10.0),
+                com.example.data.model.ExamComponent("assess1", "Assessment-I", 15.0)
+            )
+        )
+        val stuPass = Student(id = "st_pass", name = "Bilal", classId = "cls_5", sectionId = "sec_a", sessionId = "sess_1")
+        val stuFail = Student(id = "st_fail", name = "Omar", classId = "cls_5", sectionId = "sec_a", sessionId = "sess_1")
+
+        val marks = listOf(
+            MarkEntry(
+                id = "m_p", examId = "exam_term1", classId = "cls_5", studentId = "st_pass", subjectId = "sub_math",
+                obtainedMarks = 10.0, componentMarks = mapOf("quiz" to 4.0, "assess1" to 6.0)
+            ),
+            MarkEntry(
+                id = "m_f", examId = "exam_term1", classId = "cls_5", studentId = "st_fail", subjectId = "sub_math",
+                obtainedMarks = 9.5, componentMarks = mapOf("quiz" to 3.5, "assess1" to 6.0)
+            )
+        )
+
+        val summaries = ResultCalculator.computeClassResults(
+            students = listOf(stuPass, stuFail),
+            subjects = listOf(math),
+            marks = marks,
+            resultRecords = emptyList(),
+            classesById = mapOf(schoolClass.id to schoolClass),
+            sectionsById = mapOf(sectionA.id to sectionA),
+            sessionsById = mapOf(session.id to session),
+            examination = term1,
+            allGradingRules = ResultCalculator.defaultGradingTemplates(),
+            allExaminations = listOf(term1),
+            allSessionMarks = marks
+        ).associateBy { it.student.id }
+
+        val passRes = summaries["st_pass"]!!
+        assertEquals(25.0, passRes.totalMaxMarks, 0.001)
+        assertEquals(10.0, passRes.totalObtainedMarks, 0.001)
+        assertEquals(40.0, passRes.overallPercentage, 0.01)
+        assertTrue(passRes.passed)
+        assertEquals("D", passRes.overallGrade)
+
+        val failRes = summaries["st_fail"]!!
+        assertEquals(25.0, failRes.totalMaxMarks, 0.001)
+        assertEquals(38.0, failRes.overallPercentage, 0.01)
+        assertFalse(failRes.passed)
+        assertEquals("F", failRes.overallGrade)
+    }
+
+    @Test
+    fun `final exam automatically carries forward percentages from previous terms and adds manual paper marks`() {
+        // Monthly Test (Quiz 10 + Assess 15 = 25): student scores 20/25 = 80%
+        // Midterm (Max 50): student scores 45/50 = 90%
+        // Final Exam (100): Monthly Test (10% -> 8.0) + Midterm (30% -> 27.0) + Final Paper (60 -> 45.0) = 80.0/100 (80% Grade A)
+        val monthly = Examination(
+            id = "exam_monthly",
+            sessionId = "sess_1",
+            name = "Monthly Test",
+            examType = ExamType.MONTHLY_TEST.name,
+            components = listOf(
+                com.example.data.model.ExamComponent("q1", "Quiz", 10.0),
+                com.example.data.model.ExamComponent("a1", "Assessment", 15.0)
+            )
+        )
+        val midterm = Examination(
+            id = "exam_midterm",
+            sessionId = "sess_1",
+            name = "Midterm",
+            examType = ExamType.MIDTERM.name,
+            components = listOf(
+                com.example.data.model.ExamComponent("mid_paper", "Midterm Paper", 50.0)
+            )
+        )
+        val finalExam = Examination(
+            id = "exam_final",
+            sessionId = "sess_1",
+            name = "Final Exam",
+            examType = ExamType.FINAL_TERM.name,
+            components = listOf(
+                com.example.data.model.ExamComponent(
+                    id = "cf_monthly",
+                    name = "Monthly (10%)",
+                    maxMarks = 10.0,
+                    sourceExamId = "exam_monthly",
+                    weightPercentage = 10.0
+                ),
+                com.example.data.model.ExamComponent(
+                    id = "cf_midterm",
+                    name = "Midterm (30%)",
+                    maxMarks = 30.0,
+                    sourceExamId = "exam_midterm",
+                    weightPercentage = 30.0
+                ),
+                com.example.data.model.ExamComponent(
+                    id = "final_paper",
+                    name = "Final Paper",
+                    maxMarks = 60.0
+                )
+            )
+        )
+
+        val stu = Student(id = "s1", name = "Ayesha", classId = "cls_5", sectionId = "sec_a", sessionId = "sess_1")
+        val allMarks = listOf(
+            MarkEntry(
+                id = "m_mon", examId = "exam_monthly", classId = "cls_5", studentId = "s1", subjectId = "sub_math",
+                obtainedMarks = 20.0, componentMarks = mapOf("q1" to 8.0, "a1" to 12.0)
+            ),
+            MarkEntry(
+                id = "m_mid", examId = "exam_midterm", classId = "cls_5", studentId = "s1", subjectId = "sub_math",
+                obtainedMarks = 45.0, componentMarks = mapOf("mid_paper" to 45.0)
+            ),
+            MarkEntry(
+                id = "m_fin", examId = "exam_final", classId = "cls_5", studentId = "s1", subjectId = "sub_math",
+                obtainedMarks = 80.0, componentMarks = mapOf("final_paper" to 45.0)
+            )
+        )
+
+        val summary = ResultCalculator.computeClassResults(
+            students = listOf(stu),
+            subjects = listOf(math),
+            marks = allMarks.filter { it.examId == "exam_final" },
+            resultRecords = emptyList(),
+            classesById = mapOf(schoolClass.id to schoolClass),
+            sectionsById = mapOf(sectionA.id to sectionA),
+            sessionsById = mapOf(session.id to session),
+            examination = finalExam,
+            allGradingRules = ResultCalculator.defaultGradingTemplates(),
+            allExaminations = listOf(monthly, midterm, finalExam),
+            allSessionMarks = allMarks
+        ).first()
+
+        val mathRes = summary.subjectResults.first()
+        assertEquals(100.0, mathRes.effectiveMaxMarks, 0.001)
+        assertEquals(8.0, mathRes.resolvedComponentMarks["cf_monthly"] ?: -1.0, 0.001)
+        assertEquals(27.0, mathRes.resolvedComponentMarks["cf_midterm"] ?: -1.0, 0.001)
+        assertEquals(45.0, mathRes.resolvedComponentMarks["final_paper"] ?: -1.0, 0.001)
+        assertEquals(80.0, mathRes.obtainedMarks ?: -1.0, 0.001)
+        assertEquals(80.0, summary.overallPercentage, 0.01)
+        assertEquals("A", summary.overallGrade)
+        assertTrue(summary.passed)
+
+        // Pure composite exam (no manual entry needed): 50% Monthly (80% -> 40) + 50% Midterm (90% -> 45) = 85/100
+        val compositeAnnual = Examination(
+            id = "exam_annual",
+            sessionId = "sess_1",
+            name = "Annual Combined",
+            examType = ExamType.FINAL_TERM.name,
+            components = listOf(
+                com.example.data.model.ExamComponent("c1", "Monthly 50%", 50.0, sourceExamId = "exam_monthly", weightPercentage = 50.0),
+                com.example.data.model.ExamComponent("c2", "Midterm 50%", 50.0, sourceExamId = "exam_midterm", weightPercentage = 50.0)
+            )
+        )
+        val compositeSummary = ResultCalculator.computeClassResults(
+            students = listOf(stu),
+            subjects = listOf(math),
+            marks = emptyList(),
+            resultRecords = emptyList(),
+            classesById = mapOf(schoolClass.id to schoolClass),
+            sectionsById = mapOf(sectionA.id to sectionA),
+            sessionsById = mapOf(session.id to session),
+            examination = compositeAnnual,
+            allGradingRules = ResultCalculator.defaultGradingTemplates(),
+            allExaminations = listOf(monthly, midterm, compositeAnnual),
+            allSessionMarks = allMarks
+        ).first()
+        assertEquals(ResultStatus.COMPLETE, compositeSummary.status)
+        assertEquals(85.0, compositeSummary.totalObtainedMarks, 0.001)
+        assertEquals(85.0, compositeSummary.overallPercentage, 0.01)
+        assertEquals("A", compositeSummary.overallGrade)
+    }
+
     private fun readSheet1Xml(xlsxBytes: ByteArray): String {
         java.util.zip.ZipInputStream(ByteArrayInputStream(xlsxBytes)).use { zis ->
             var entry = zis.nextEntry

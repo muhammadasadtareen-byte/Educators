@@ -116,7 +116,23 @@ fun SettingsScreen(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
-            logoBase64 = FileExportHelper.uriToCompressedBase64(context, uri, maxPx = 220)
+            val encoded = FileExportHelper.uriToCompressedBase64(context, uri, maxPx = 220)
+            if (encoded != null) {
+                logoBase64 = encoded
+                // Immediately persist to Firestore so all connected teacher accounts receive the updated logo
+                viewModel.updateCampusSettings(
+                    campus = snapshot.campus,
+                    schoolName = schoolName,
+                    campusName = campusName,
+                    address = campusAddress,
+                    contact = campusContact,
+                    studentEntryFields = studentEntryFields.toList(),
+                    allowDecimalMarks = allowDecimalMarks,
+                    activeSessionId = snapshot.selectedSessionId,
+                    activeExamId = snapshot.selectedExamId,
+                    logoBase64 = encoded
+                )
+            }
         }
     }
 
@@ -292,35 +308,25 @@ fun SettingsScreen(
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("School Branding & Marks Policy", style = MaterialTheme.typography.titleMedium, color = EducatorsNavy)
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            val bmp = remember(logoBase64) { PdfReportGenerator.decodeBase64Bitmap(logoBase64) }
-                            Surface(shape = CircleShape, color = Color.White, modifier = Modifier.size(56.dp)) {
-                                if (bmp != null) {
-                                    Image(
-                                        bitmap = bmp.asImageBitmap(),
-                                        contentDescription = "School Logo",
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize().clip(CircleShape)
-                                    )
-                                } else {
-                                    Image(
-                                        painter = painterResource(id = R.drawable.img_school_crest),
-                                        contentDescription = "Default Crest",
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize().clip(CircleShape)
-                                    )
+                            SchoolLogoBadge(logoBase64 = logoBase64, sizeDp = 56, paddingDp = 3)
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                OutlinedButton(
+                                    onClick = {
+                                        logoPickerLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    },
+                                    modifier = Modifier.heightIn(min = 48.dp)
+                                ) {
+                                    Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Upload School Logo")
                                 }
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    logoPickerLauncher.launch(
-                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                    )
-                                },
-                                modifier = Modifier.heightIn(min = 48.dp)
-                            ) {
-                                Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Upload School Logo")
+                                Text(
+                                    text = "Saves & syncs instantly to all teacher portals.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
 
@@ -476,6 +482,17 @@ fun SettingsScreen(
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
+                                        if (exam.components.isNotEmpty()) {
+                                            val totalCompMax = exam.components.sumOf { it.maxMarks }
+                                            val linkedCount = exam.components.count { it.isCarryForward() }
+                                            Text(
+                                                text = "Total ${com.example.domain.ResultCalculator.formatMarks(totalCompMax)} • " +
+                                                    "${exam.components.size} part(s)" +
+                                                    if (linkedCount > 0) " • $linkedCount carried from term(s)" else "",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = EducatorsBlue
+                                            )
+                                        }
                                     }
                                     IconButton(
                                         onClick = { editingExam = exam },
@@ -749,6 +766,7 @@ fun SettingsScreen(
         ExamEditorDialog(
             existing = null,
             sessions = snapshot.sessions,
+            availableExams = snapshot.examinations,
             defaultSessionId = snapshot.selectedSessionId,
             defaultSortOrder = (snapshot.examinations.size + 1).toLong(),
             canDelete = false,
@@ -772,6 +790,7 @@ fun SettingsScreen(
         ExamEditorDialog(
             existing = target,
             sessions = snapshot.sessions,
+            availableExams = snapshot.examinations,
             defaultSessionId = snapshot.selectedSessionId,
             defaultSortOrder = target.sortOrder,
             canDelete = snapshot.examinations.size > 1,

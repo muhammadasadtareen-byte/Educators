@@ -147,8 +147,8 @@ object XlsxEngine {
                 CellValue.Text(summary.student.name),
                 CellValue.Text(summary.student.fatherName.takeIf { it != "-" }.orEmpty()),
                 CellValue.Text(subject.name),
-                CellValue.Number(subject.maxMarks),
-                CellValue.Number(subject.passingMarks),
+                CellValue.Number(sr?.effectiveMaxMarks ?: subject.maxMarks),
+                CellValue.Number(sr?.effectivePassingMarks ?: (subject.maxMarks * 0.40)),
                 obtainedCell,
                 pctCell,
                 CellValue.Text(sr?.grade ?: "-"),
@@ -191,7 +191,7 @@ object XlsxEngine {
             buildList {
                 add(CellValue.Text(sr.subject.name + if (sr.passed == false && sr.subject.compulsory) " *" else ""))
                 components.forEach { comp ->
-                    val compVal = sr.markEntry?.componentMarks?.get(comp.id)
+                    val compVal = sr.resolvedComponentMarks[comp.id]
                     if (compVal != null) {
                         add(CellValue.Number(compVal))
                     } else {
@@ -290,7 +290,9 @@ object XlsxEngine {
         examComponents: List<ExamComponent> = emptyList()
     ): ByteArray {
         val sortedSubjects = subjects.sortedWith(compareBy<Subject> { it.sortOrder }.thenBy { it.name })
-        val totalMax = sortedSubjects.sumOf { it.maxMarks }
+        val compTotal = examComponents.sumOf { it.maxMarks }
+        val totalMax = summaries.firstOrNull()?.totalMaxMarks
+            ?: sortedSubjects.sumOf { if (examComponents.isNotEmpty() && compTotal > 0.0) compTotal else it.maxMarks }
 
         val groupHeaders: List<String>?
         val headers: List<String>
@@ -348,7 +350,7 @@ object XlsxEngine {
                     sortedSubjects.forEach { sub ->
                         val sr = summary.subjectResults.firstOrNull { it.subject.id == sub.id }
                         examComponents.forEach { comp ->
-                            val compMark = sr?.markEntry?.componentMarks?.get(comp.id)
+                            val compMark = sr?.resolvedComponentMarks?.get(comp.id)
                             if (compMark != null) {
                                 add(CellValue.Number(compMark))
                             } else {

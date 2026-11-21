@@ -125,21 +125,11 @@ fun DashboardScreen(
                     )
                     Column(modifier = Modifier.padding(18.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(
-                                shape = CircleShape,
-                                color = Color.White,
-                                modifier = Modifier.size(50.dp)
-                            ) {
-                                Image(
-                                    painter = painterResource(id = R.drawable.img_school_crest),
-                                    contentDescription = "School crest",
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(4.dp)
-                                        .clip(CircleShape)
-                                )
-                            }
+                            SchoolLogoBadge(
+                                logoBase64 = snapshot.campus.logoBase64,
+                                sizeDp = 50,
+                                paddingDp = 4
+                            )
                             Spacer(Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
@@ -498,6 +488,7 @@ fun DashboardScreen(
         ExamEditorDialog(
             existing = target,
             sessions = snapshot.sessions,
+            availableExams = snapshot.examinations,
             defaultSessionId = snapshot.selectedSessionId,
             defaultSortOrder = target.sortOrder,
             canDelete = snapshot.examinations.size > 1,
@@ -517,6 +508,7 @@ fun DashboardScreen(
         ExamEditorDialog(
             existing = null,
             sessions = snapshot.sessions,
+            availableExams = snapshot.examinations,
             defaultSessionId = snapshot.selectedSessionId,
             defaultSortOrder = (snapshot.examinations.size + 1).toLong(),
             canDelete = false,
