@@ -54,7 +54,11 @@ import com.example.data.model.StaffRole
 import com.example.domain.ImportedMarkDraft
 import com.example.domain.ImportedStudentDraft
 import com.example.domain.ImportedSubjectDraft
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material3.FilterChip
 import com.example.domain.PdfReportGenerator
+import com.example.domain.ResultCalculator
+import com.example.domain.StudentResultSortOrder
 import com.example.domain.XlsxEngine
 import com.example.ui.MainViewModel
 import com.example.ui.SchoolSnapshot
@@ -93,8 +97,10 @@ fun ExcelCenterScreen(
     var selectedSubjectId by remember(selectedClassId, classSubjects) {
         mutableStateOf(classSubjects.firstOrNull()?.id.orEmpty())
     }
-    val classSummaries = remember(snapshot.allStudentSummaries, selectedClassId) {
-        snapshot.allStudentSummaries.filter { it.student.classId == selectedClassId }
+    var studentSortOrder by remember { mutableStateOf(StudentResultSortOrder.ENTRY_ORDER) }
+    val classSummaries = remember(snapshot.allStudentSummaries, selectedClassId, studentSortOrder) {
+        val raw = snapshot.allStudentSummaries.filter { it.student.classId == selectedClassId }
+        ResultCalculator.sortStudentSummaries(raw, studentSortOrder)
     }
     var selectedStudentId by remember(classSummaries) {
         mutableStateOf(classSummaries.firstOrNull()?.student?.id.orEmpty())
@@ -244,6 +250,27 @@ fun ExcelCenterScreen(
                             onSelect = { selectedStudentId = it.student.id },
                             modifier = Modifier.weight(1f)
                         )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Student Order:",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        StudentResultSortOrder.entries.forEach { order ->
+                            FilterChip(
+                                selected = studentSortOrder == order,
+                                onClick = { studentSortOrder = order },
+                                label = { Text(order.label) },
+                                modifier = Modifier.testTag("excel_sort_${order.name.lowercase()}")
+                            )
+                        }
                     }
                 }
             }
@@ -659,8 +686,10 @@ fun PdfCenterScreen(
     var selectedSubjectId by remember(selectedClassId, classSubjects) {
         mutableStateOf(classSubjects.firstOrNull()?.id.orEmpty())
     }
-    val classSummaries = remember(snapshot.allStudentSummaries, selectedClassId) {
-        snapshot.allStudentSummaries.filter { it.student.classId == selectedClassId }
+    var studentSortOrder by remember { mutableStateOf(StudentResultSortOrder.ENTRY_ORDER) }
+    val classSummaries = remember(snapshot.allStudentSummaries, selectedClassId, studentSortOrder) {
+        val raw = snapshot.allStudentSummaries.filter { it.student.classId == selectedClassId }
+        ResultCalculator.sortStudentSummaries(raw, studentSortOrder)
     }
     var selectedStudentId by remember(classSummaries) {
         mutableStateOf(classSummaries.firstOrNull()?.student?.id.orEmpty())
@@ -756,6 +785,27 @@ fun PdfCenterScreen(
                             onSelect = { selectedStudentId = it.student.id },
                             modifier = Modifier.weight(1f)
                         )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Student Order:",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        StudentResultSortOrder.entries.forEach { order ->
+                            FilterChip(
+                                selected = studentSortOrder == order,
+                                onClick = { studentSortOrder = order },
+                                label = { Text(order.label) },
+                                modifier = Modifier.testTag("pdf_sort_${order.name.lowercase()}")
+                            )
+                        }
                     }
                 }
             }

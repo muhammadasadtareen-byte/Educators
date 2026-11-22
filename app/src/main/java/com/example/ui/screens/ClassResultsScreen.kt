@@ -60,6 +60,7 @@ import com.example.data.model.StudentResultSummary
 import com.example.data.model.Subject
 import com.example.domain.PdfReportGenerator
 import com.example.domain.ResultCalculator
+import com.example.domain.StudentResultSortOrder
 import com.example.domain.XlsxEngine
 import com.example.ui.MainViewModel
 import com.example.ui.SchoolSnapshot
@@ -70,12 +71,6 @@ import com.example.ui.theme.EmeraldPass
 import java.io.File
 
 private val SheetTeal = Color(0xFF0B4F6C)
-
-private enum class ResultSort(val label: String) {
-    ROLL("Roll / Name"),
-    POSITION("Position"),
-    PERCENTAGE("Percentage")
-}
 
 private enum class ResultFilter(val label: String) {
     ALL("All"),
@@ -98,7 +93,7 @@ fun ClassResultsScreen(
     }
     var selectedSectionId by remember(selectedClassId) { mutableStateOf("ALL") }
     var searchQuery by remember { mutableStateOf("") }
-    var sortBy by remember { mutableStateOf(ResultSort.POSITION) }
+    var sortBy by remember { mutableStateOf(StudentResultSortOrder.ENTRY_ORDER) }
     var filterBy by remember { mutableStateOf(ResultFilter.ALL) }
 
     val classSubjects = remember(snapshot.subjects, selectedClassId) {
@@ -131,18 +126,7 @@ fun ClassResultsScreen(
             }
             matchClass && matchSection && matchSearch && matchFilter
         }
-        when (sortBy) {
-            ResultSort.ROLL -> base.sortedWith(
-                compareBy<StudentResultSummary> { it.student.rollNumber.toIntOrNull() ?: Int.MAX_VALUE }
-                    .thenBy { it.student.name }
-            )
-            ResultSort.PERCENTAGE -> base.sortedByDescending { it.overallPercentage }
-            ResultSort.POSITION -> base.sortedWith(
-                compareBy<StudentResultSummary> { it.position ?: Int.MAX_VALUE }
-                    .thenByDescending { it.overallPercentage }
-                    .thenBy { it.student.name }
-            )
-        }
+        ResultCalculator.sortStudentSummaries(base, sortBy)
     }
 
     var pendingSaveFile by remember { mutableStateOf<File?>(null) }
@@ -237,20 +221,42 @@ fun ClassResultsScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            ResultSort.entries.forEach { s ->
+            Text(
+                text = "Order:",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            StudentResultSortOrder.entries.forEach { s ->
                 FilterChip(
                     selected = sortBy == s,
                     onClick = { sortBy = s },
-                    label = { Text("Sort: ${s.label}") }
+                    label = { Text(s.label) },
+                    modifier = Modifier.testTag("sort_${s.name.lowercase()}")
                 )
             }
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Status:",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             ResultFilter.entries.forEach { f ->
                 FilterChip(
                     selected = filterBy == f,
                     onClick = { filterBy = f },
-                    label = { Text(f.label) }
+                    label = { Text(f.label) },
+                    modifier = Modifier.testTag("filter_${f.name.lowercase()}")
                 )
             }
         }
@@ -339,12 +345,12 @@ fun ClassResultsScreen(
                     classSubjects.sumOf { it.maxMarks }
                 }
 
-            val nameColW = 138.dp
-            val compColW = 82.dp
-            val singleSubW = 86.dp
-            val obtColW = 72.dp
-            val pctColW = 60.dp
-            val gradeColW = 52.dp
+            val nameColW = 144.dp
+            val compColW = 102.dp
+            val singleSubW = 96.dp
+            val obtColW = 76.dp
+            val pctColW = 62.dp
+            val gradeColW = 58.dp
             val posColW = 48.dp
 
             Card(
@@ -432,9 +438,16 @@ fun ClassResultsScreen(
                             .background(SheetTeal)
                     ) {
                         if (useComponents) {
+                            val sampleSummary = filteredSummaries.firstOrNull()
                             SheetHeaderBox("Name", nameColW, Modifier.fillMaxHeight(), Alignment.CenterStart)
                             classSubjects.forEach { sub ->
                                 val groupW = compColW * examComponents.size
+                                val subEffectiveComps = sampleSummary
+                                    ?.subjectResults
+                                    ?.firstOrNull { it.subject.id == sub.id }
+                                    ?.effectiveComponents
+                                    ?.takeIf { it.isNotEmpty() }
+                                    ?: examComponents
                                 Column(
                                     modifier = Modifier
                                         .width(groupW)
@@ -443,36 +456,45 @@ fun ClassResultsScreen(
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .height(28.dp)
+                                            .heightIn(min = 32.dp)
                                             .border(0.5.dp, Color.White.copy(alpha = 0.5f))
-                                            .padding(horizontal = 4.dp),
+                                            .padding(horizontal = 4.dp, vertical = 4.dp),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(
                                             text = sub.name,
                                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                             color = Color.White,
-                                            maxLines = 1,
+                                            maxLines = 2,
                                             overflow = TextOverflow.Ellipsis,
                                             textAlign = TextAlign.Center
                                         )
                                     }
-                                    Row(modifier = Modifier.fillMaxWidth()) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(IntrinsicSize.Min)
+                                    ) {
                                         examComponents.forEach { comp ->
+                                            val effMax = subEffectiveComps.firstOrNull { it.id == comp.id }?.maxMarks ?: comp.maxMarks
                                             Box(
                                                 modifier = Modifier
                                                     .width(compColW)
-                                                    .height(34.dp)
+                                                    .fillMaxHeight()
+                                                    .heightIn(min = 48.dp)
                                                     .border(0.5.dp, Color.White.copy(alpha = 0.5f))
-                                                    .padding(horizontal = 3.dp),
+                                                    .padding(horizontal = 4.dp, vertical = 4.dp),
                                                 contentAlignment = Alignment.Center
                                             ) {
                                                 Text(
-                                                    text = "${comp.name} (${ResultCalculator.formatMarks(comp.maxMarks)})",
-                                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 11.sp),
+                                                    text = "${comp.name}\n(${ResultCalculator.formatMarks(effMax)})",
+                                                    style = MaterialTheme.typography.labelSmall.copy(
+                                                        fontSize = 10.sp,
+                                                        lineHeight = 12.sp,
+                                                        fontWeight = FontWeight.Medium
+                                                    ),
                                                     color = Color.White,
-                                                    maxLines = 2,
-                                                    overflow = TextOverflow.Ellipsis,
+                                                    maxLines = 4,
                                                     textAlign = TextAlign.Center
                                                 )
                                             }
@@ -480,24 +502,29 @@ fun ClassResultsScreen(
                                     }
                                 }
                             }
-                            SheetHeaderBox("Obt. (${ResultCalculator.formatMarks(totalMax)})", obtColW, Modifier.fillMaxHeight(), Alignment.Center)
+                            SheetHeaderBox("Obt.\n(${ResultCalculator.formatMarks(totalMax)})", obtColW, Modifier.fillMaxHeight(), Alignment.Center)
                             SheetHeaderBox("% age", pctColW, Modifier.fillMaxHeight(), Alignment.Center)
                             SheetHeaderBox("Grade", gradeColW, Modifier.fillMaxHeight(), Alignment.Center)
                             SheetHeaderBox("Pos", posColW, Modifier.fillMaxHeight(), Alignment.Center)
                         } else {
-                            SheetHeaderBox("Name", nameColW, Modifier.height(42.dp), Alignment.CenterStart)
+                            SheetHeaderBox("Name", nameColW, Modifier.heightIn(min = 46.dp).fillMaxHeight(), Alignment.CenterStart)
                             classSubjects.forEach { sub ->
+                                val effMax = filteredSummaries.firstOrNull()
+                                    ?.subjectResults
+                                    ?.firstOrNull { it.subject.id == sub.id }
+                                    ?.effectiveMaxMarks
+                                    ?: sub.maxMarks
                                 SheetHeaderBox(
-                                    "${sub.name} (${ResultCalculator.formatMarks(sub.maxMarks)})",
+                                    "${sub.name}\n(${ResultCalculator.formatMarks(effMax)})",
                                     singleSubW,
-                                    Modifier.height(42.dp),
+                                    Modifier.heightIn(min = 46.dp).fillMaxHeight(),
                                     Alignment.Center
                                 )
                             }
-                            SheetHeaderBox("Obt. (${ResultCalculator.formatMarks(totalMax)})", obtColW, Modifier.height(42.dp), Alignment.Center)
-                            SheetHeaderBox("% age", pctColW, Modifier.height(42.dp), Alignment.Center)
-                            SheetHeaderBox("Grade", gradeColW, Modifier.height(42.dp), Alignment.Center)
-                            SheetHeaderBox("Pos", posColW, Modifier.height(42.dp), Alignment.Center)
+                            SheetHeaderBox("Obt.\n(${ResultCalculator.formatMarks(totalMax)})", obtColW, Modifier.heightIn(min = 46.dp).fillMaxHeight(), Alignment.Center)
+                            SheetHeaderBox("% age", pctColW, Modifier.heightIn(min = 46.dp).fillMaxHeight(), Alignment.Center)
+                            SheetHeaderBox("Grade", gradeColW, Modifier.heightIn(min = 46.dp).fillMaxHeight(), Alignment.Center)
+                            SheetHeaderBox("Pos", posColW, Modifier.heightIn(min = 46.dp).fillMaxHeight(), Alignment.Center)
                         }
                     }
 

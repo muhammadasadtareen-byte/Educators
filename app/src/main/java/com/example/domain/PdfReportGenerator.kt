@@ -125,13 +125,139 @@ object PdfReportGenerator {
         val logoBitmap = decodeLogoBitmap(context, schoolLogoBase64)
         val secondaryLogoBitmap = decodeBase64Bitmap(secondaryLogoBase64)
         val sortedSubjects = subjects.sortedWith(compareBy<Subject> { it.sortOrder }.thenBy { it.name })
-        val rowsPerPage = 20
-        val chunks = if (summaries.isEmpty()) listOf(emptyList()) else summaries.chunked(rowsPerPage)
-        val totalPages = chunks.size
         val useComponents = examComponents.isNotEmpty() && sortedSubjects.isNotEmpty()
         val compTotal = examComponents.sumOf { it.maxMarks }
         val totalMax = summaries.firstOrNull()?.totalMaxMarks
             ?: sortedSubjects.sumOf { if (useComponents && compTotal > 0.0) compTotal else it.maxMarks }
+
+        // Resolve per-subject effective component max marks (honoring any per-subject overrides)
+        val effectiveComponentsBySubjectId: Map<String, List<ExamComponent>> = sortedSubjects.associate { sub ->
+            val resolved = summaries.firstOrNull()
+                ?.subjectResults
+                ?.firstOrNull { it.subject.id == sub.id }
+                ?.effectiveComponents
+                ?.takeIf { it.isNotEmpty() }
+                ?: examComponents
+            sub.id to resolved
+        }
+
+        // Compute landscape column widths cleanly so all subjects, assessments, totals & grades fit
+        val startX = 24f
+        val usableW = A4_LANDSCAPE_WIDTH - 48f // 794f
+        val nameW = 104f
+        val obtW = 44f
+        val pctW = 36f
+        val gradeW = 38f
+        val middleTotalW = (usableW - nameW - obtW - pctW - gradeW).coerceAtLeast(120f)
+
+        val headerTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+        }
+
+        // Pre-compute banner height and wrapped header layouts so rowsPerPage is always exact
+        var bannerEndY = 37f + 14f // school + campus
+        if (address.isNotBlank()) bannerEndY += 12f
+        if (contact.isNotBlank()) bannerEndY += 11f
+        bannerEndY += 14f + 14f + 10f // Consolidated Sheet + Class/Exam + gap
+
+        data class WrappedHeaderCell(
+            val lines: List<String>,
+            val textSize: Float
+        )
+
+        val subjectTopCells = mutableListOf<WrappedHeaderCell>()
+        val componentSubCells = mutableListOf<List<WrappedHeaderCell>>()
+        val singleSubCells = mutableListOf<WrappedHeaderCell>()
+        val compColW: Float
+        val topRowH: Float
+        val subRowH: Float
+        val totalHeaderH: Float
+
+        if (useComponents) {
+            val totalSubCols = sortedSubjects.size * examComponents.size
+            compColW = middleTotalW / totalSubCols.coerceAtLeast(1)
+            val baseSubjSize = when {
+                sortedSubjects.size > 9 -> 6.8f
+                sortedSubjects.size > 7 -> 7.4f
+                else -> 8.2f
+            }
+            val baseCompSize = when {
+                compColW >= 54f -> 6.8f
+                compColW >= 40f -> 6.0f
+                compColW >= 32f -> 5.5f
+                else -> 4.9f
+            }
+
+            var maxTopLines = 1
+            var maxSubLines = 2
+            var minCompFontUsed = baseCompSize
+
+            sortedSubjects.forEach { sub ->
+                val groupW = compColW * examComponents.size
+                val (sLines, sSize) = fitWrappedLines(
+                    text = sub.name,
+                    maxWidth = (groupW - 4f).coerceAtLeast(14f),
+                    baseTextSize = baseSubjSize,
+                    minTextSize = 4.6f,
+                    paint = headerTextPaint
+                )
+                subjectTopCells.add(WrappedHeaderCell(sLines, sSize))
+                if (sLines.size > maxTopLines) maxTopLines = sLines.size
+
+                val subEffectiveComps = effectiveComponentsBySubjectId[sub.id].orEmpty()
+                val cellsForSub = examComponents.map { comp ->
+                    val effMax = subEffectiveComps.firstOrNull { it.id == comp.id }?.maxMarks ?: comp.maxMarks
+                    val maxTag = "(${ResultCalculator.formatMarks(effMax)})"
+                    val (cLines, cSize) = fitComponentHeaderLines(
+                        componentName = comp.name,
+                        maxMarksTag = maxTag,
+                        maxWidth = (compColW - 3f).coerceAtLeast(12f),
+                        baseTextSize = baseCompSize,
+                        minTextSize = 4.0f,
+                        paint = headerTextPaint
+                    )
+                    if (cLines.size > maxSubLines) maxSubLines = cLines.size
+                    if (cSize < minCompFontUsed) minCompFontUsed = cSize
+                    WrappedHeaderCell(cLines, cSize)
+                }
+                componentSubCells.add(cellsForSub)
+            }
+
+            val topLineStep = baseSubjSize + 2.2f
+            val subLineStep = baseCompSize + 1.8f
+            topRowH = (maxTopLines * topLineStep + 7f).coerceAtLeast(18f)
+            subRowH = (maxSubLines * subLineStep + 7f).coerceAtLeast(22f)
+            totalHeaderH = topRowH + subRowH
+        } else {
+            val subCount = sortedSubjects.size.coerceAtLeast(1)
+            compColW = middleTotalW / subCount
+            val baseSize = if (sortedSubjects.size > 8) 7.2f else 8.2f
+            var maxLines = 1
+            sortedSubjects.forEach { sub ->
+                val (lines, sz) = fitComponentHeaderLines(
+                    componentName = sub.name,
+                    maxMarksTag = "(${ResultCalculator.formatMarks(sub.maxMarks)})",
+                    maxWidth = (compColW - 4f).coerceAtLeast(14f),
+                    baseTextSize = baseSize,
+                    minTextSize = 4.6f,
+                    paint = headerTextPaint
+                )
+                singleSubCells.add(WrappedHeaderCell(lines, sz))
+                if (lines.size > maxLines) maxLines = lines.size
+            }
+            topRowH = (maxLines * (baseSize + 2.0f) + 8f).coerceAtLeast(24f)
+            subRowH = 0f
+            totalHeaderH = topRowH
+        }
+
+        val rowH = 18.5f
+        val footerSafeBottom = A4_LANDSCAPE_HEIGHT - 36f
+        val availableBodyH = (footerSafeBottom - (bannerEndY + totalHeaderH)).coerceAtLeast(rowH * 10f)
+        val rowsPerPage = (availableBodyH / rowH).toInt().coerceIn(12, 22)
+        val chunks = if (summaries.isEmpty()) listOf(emptyList()) else summaries.chunked(rowsPerPage)
+        val totalPages = chunks.size
 
         chunks.forEachIndexed { pageIdx, pageRows ->
             val pageInfo = PdfDocument.PageInfo.Builder(A4_LANDSCAPE_WIDTH, A4_LANDSCAPE_HEIGHT, pageIdx + 1).create()
@@ -206,31 +332,11 @@ object PdfReportGenerator {
             canvas.drawText("$className - $sectionLabel *** ${examName.uppercase()}", centerX, y, hExamPaint)
             y += 10f
 
-            // Compute landscape column widths
-            val startX = 26f
-            val usableW = A4_LANDSCAPE_WIDTH - 52f // 790f
-            val nameW = 108f
-            val obtW = 46f
-            val pctW = 38f
-            val gradeW = 32f
-            val middleTotalW = (usableW - nameW - obtW - pctW - gradeW).coerceAtLeast(120f)
-
             val subColWidths = mutableListOf<Float>()
             val headerBgPaint = Paint().apply { color = tealColor }
             val headerStrokePaint = Paint().apply { color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 0.7f }
-            val headerTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.WHITE
-                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-                textAlign = Paint.Align.CENTER
-            }
 
             if (useComponents) {
-                val totalSubCols = sortedSubjects.size * examComponents.size
-                val compColW = (middleTotalW / totalSubCols.coerceAtLeast(1))
-                val topRowH = 18f
-                val subRowH = 18f
-                val totalHeaderH = topRowH + subRowH
-
                 // Name vertical cell
                 val nameRect = RectF(startX, y, startX + nameW, y + totalHeaderH)
                 canvas.drawRect(nameRect, headerBgPaint)
@@ -241,78 +347,110 @@ object PdfReportGenerator {
                 headerTextPaint.textAlign = Paint.Align.CENTER
 
                 var x = startX + nameW
-                sortedSubjects.forEach { sub ->
+                sortedSubjects.forEachIndexed { subIdx, _ ->
                     val groupW = compColW * examComponents.size
                     val topRect = RectF(x, y, x + groupW, y + topRowH)
                     canvas.drawRect(topRect, headerBgPaint)
                     canvas.drawRect(topRect, headerStrokePaint)
-                    headerTextPaint.textSize = if (sortedSubjects.size > 7) 7.5f else 8.5f
-                    canvas.drawText(fitText(sub.name, groupW - 4f, headerTextPaint), x + groupW / 2f, y + topRowH / 2f + 3f, headerTextPaint)
+                    val subjCell = subjectTopCells[subIdx]
+                    drawCenteredLines(
+                        canvas = canvas,
+                        lines = subjCell.lines,
+                        rect = topRect,
+                        textSize = subjCell.textSize,
+                        paint = headerTextPaint
+                    )
 
-                    examComponents.forEach { comp ->
+                    val subCells = componentSubCells[subIdx]
+                    subCells.forEach { cCell ->
                         val compRect = RectF(x, y + topRowH, x + compColW, y + totalHeaderH)
                         canvas.drawRect(compRect, headerBgPaint)
                         canvas.drawRect(compRect, headerStrokePaint)
-                        headerTextPaint.textSize = if (totalSubCols > 14) 5.5f else 6.8f
-                        val label = "${comp.name.take(14)} (${ResultCalculator.formatMarks(comp.maxMarks)})"
-                        canvas.drawText(fitText(label, compColW - 2f, headerTextPaint), x + compColW / 2f, y + topRowH + subRowH / 2f + 2.2f, headerTextPaint)
+                        drawCenteredLines(
+                            canvas = canvas,
+                            lines = cCell.lines,
+                            rect = compRect,
+                            textSize = cCell.textSize,
+                            paint = headerTextPaint
+                        )
                         subColWidths.add(compColW)
                         x += compColW
                     }
                 }
 
-                // Obt., % age, Grade vertical cells
+                // Obt., % age, Grade vertical cells (multi-line so Obt. (400) never clips)
                 val tailHeaders = listOf(
-                    "Obt. (${ResultCalculator.formatMarks(totalMax)})" to obtW,
-                    "% age" to pctW,
-                    "Grade" to gradeW
+                    listOf("Obt.", "(${ResultCalculator.formatMarks(totalMax)})") to obtW,
+                    listOf("% age") to pctW,
+                    listOf("Grade") to gradeW
                 )
-                headerTextPaint.textSize = 8f
-                tailHeaders.forEach { (lbl, w) ->
+                tailHeaders.forEach { (lines, w) ->
                     val rect = RectF(x, y, x + w, y + totalHeaderH)
                     canvas.drawRect(rect, headerBgPaint)
                     canvas.drawRect(rect, headerStrokePaint)
-                    canvas.drawText(fitText(lbl, w - 3f, headerTextPaint), x + w / 2f, y + totalHeaderH / 2f + 3f, headerTextPaint)
+                    drawCenteredLines(
+                        canvas = canvas,
+                        lines = lines,
+                        rect = rect,
+                        textSize = 7.8f,
+                        paint = headerTextPaint
+                    )
                     x += w
                 }
                 y += totalHeaderH
             } else {
-                val subCount = sortedSubjects.size.coerceAtLeast(1)
-                val singleSubW = middleTotalW / subCount
-                val colWidths = buildList {
-                    add(nameW)
-                    repeat(sortedSubjects.size) { add(singleSubW); subColWidths.add(singleSubW) }
-                    add(obtW); add(pctW); add(gradeW)
-                }
-                val headers = buildList {
-                    add("Name")
-                    sortedSubjects.forEach { add("${it.name} (${ResultCalculator.formatMarks(it.maxMarks)})") }
-                    add("Obt. (${ResultCalculator.formatMarks(totalMax)})")
-                    add("% age")
-                    add("Grade")
-                }
-                val rowH = 22f
                 var x = startX
-                headerTextPaint.textSize = if (colWidths.size > 10) 7.5f else 8.5f
-                headers.forEachIndexed { idx, h ->
-                    val w = colWidths[idx]
-                    val rect = RectF(x, y, x + w, y + rowH)
+                val nameRect = RectF(x, y, x + nameW, y + totalHeaderH)
+                canvas.drawRect(nameRect, headerBgPaint)
+                canvas.drawRect(nameRect, headerStrokePaint)
+                headerTextPaint.textSize = 9.2f
+                headerTextPaint.textAlign = Paint.Align.LEFT
+                canvas.drawText("Name", x + 4f, y + totalHeaderH / 2f + 3f, headerTextPaint)
+                headerTextPaint.textAlign = Paint.Align.CENTER
+                x += nameW
+
+                singleSubCells.forEach { sCell ->
+                    val rect = RectF(x, y, x + compColW, y + totalHeaderH)
                     canvas.drawRect(rect, headerBgPaint)
                     canvas.drawRect(rect, headerStrokePaint)
-                    headerTextPaint.textAlign = if (idx == 0) Paint.Align.LEFT else Paint.Align.CENTER
-                    val tx = if (idx == 0) x + 4f else x + w / 2f
-                    canvas.drawText(fitText(h, w - 4f, headerTextPaint), tx, y + rowH / 2f + 3f, headerTextPaint)
+                    drawCenteredLines(
+                        canvas = canvas,
+                        lines = sCell.lines,
+                        rect = rect,
+                        textSize = sCell.textSize,
+                        paint = headerTextPaint
+                    )
+                    subColWidths.add(compColW)
+                    x += compColW
+                }
+
+                val tailHeaders = listOf(
+                    listOf("Obt.", "(${ResultCalculator.formatMarks(totalMax)})") to obtW,
+                    listOf("% age") to pctW,
+                    listOf("Grade") to gradeW
+                )
+                tailHeaders.forEach { (lines, w) ->
+                    val rect = RectF(x, y, x + w, y + totalHeaderH)
+                    canvas.drawRect(rect, headerBgPaint)
+                    canvas.drawRect(rect, headerStrokePaint)
+                    drawCenteredLines(
+                        canvas = canvas,
+                        lines = lines,
+                        rect = rect,
+                        textSize = 7.8f,
+                        paint = headerTextPaint
+                    )
                     x += w
                 }
-                y += rowH
+                y += totalHeaderH
             }
 
             // Data rows
-            val rowH = 19f
             val allWidths = listOf(nameW) + subColWidths + listOf(obtW, pctW, gradeW)
+            val baseCellTextSize = if (allWidths.size > 16) 7.1f else 8.2f
             val cellPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = darkText
-                textSize = if (allWidths.size > 16) 7f else 8.2f
+                textSize = baseCellTextSize
             }
             val cellStroke = Paint().apply { color = borderColor; style = Paint.Style.STROKE; strokeWidth = 0.6f }
 
@@ -353,8 +491,18 @@ object PdfReportGenerator {
                         Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
                     } else Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
                     cellPaint.textAlign = if (cIdx == 0) Paint.Align.LEFT else Paint.Align.CENTER
+
+                    // Gently auto-shrink text size for long names or narrow cells so full data shows
+                    val innerMaxW = (w - if (cIdx == 0) 6f else 3f).coerceAtLeast(8f)
+                    var sz = baseCellTextSize
+                    cellPaint.textSize = sz
+                    while (sz > 5.4f && cellPaint.measureText(v) > innerMaxW) {
+                        sz -= 0.35f
+                        cellPaint.textSize = sz
+                    }
                     val tx = if (cIdx == 0) x + 3.5f else x + w / 2f
-                    canvas.drawText(fitText(v, w - 3f, cellPaint), tx, y + rowH / 2f + 2.8f, cellPaint)
+                    val baselineY = y + rowH / 2f - (cellPaint.descent() + cellPaint.ascent()) / 2f
+                    canvas.drawText(fitText(v, innerMaxW, cellPaint), tx, baselineY, cellPaint)
                     x += w
                 }
                 y += rowH
@@ -368,7 +516,7 @@ object PdfReportGenerator {
             footerPaint.textAlign = Paint.Align.LEFT
             canvas.drawText("$schoolName — $campusName", startX, A4_LANDSCAPE_HEIGHT - 26f, footerPaint)
             footerPaint.textAlign = Paint.Align.RIGHT
-            canvas.drawText("Page ${pageIdx + 1}/$totalPages  •  Session: $sessionName", A4_LANDSCAPE_WIDTH - 26f, A4_LANDSCAPE_HEIGHT - 26f, footerPaint)
+            canvas.drawText("Page ${pageIdx + 1}/$totalPages  •  Session: $sessionName", A4_LANDSCAPE_WIDTH - 24f, A4_LANDSCAPE_HEIGHT - 26f, footerPaint)
 
             doc.finishPage(page)
         }
@@ -1160,6 +1308,141 @@ object PdfReportGenerator {
             end--
         }
         return if (end <= 1) text.take(1) else text.substring(0, end) + ".."
+    }
+
+    /**
+     * Wraps a header label onto multiple lines cleanly without dropping words or numbers.
+     * Gently steps font size down if any single token is wider than [maxWidth].
+     */
+    private fun fitWrappedLines(
+        text: String,
+        maxWidth: Float,
+        baseTextSize: Float,
+        minTextSize: Float,
+        paint: Paint
+    ): Pair<List<String>, Float> {
+        val cleaned = text.trim()
+        if (cleaned.isEmpty()) return listOf("") to baseTextSize
+        val tokens = tokenizeHeaderText(cleaned)
+        val probe = Paint(paint)
+        var size = baseTextSize
+        while (size > minTextSize) {
+            probe.textSize = size
+            val allTokensFit = tokens.all { probe.measureText(it) <= maxWidth }
+            if (allTokensFit) break
+            size = (size - 0.3f).coerceAtLeast(minTextSize)
+        }
+        probe.textSize = size
+        val lines = wrapTokens(tokens, maxWidth, probe)
+        return lines to size
+    }
+
+    /**
+     * Wraps a component/subject name cleanly and keeps [maxMarksTag] (e.g. "(30)") intact on the last line
+     * so total marks are always completely visible.
+     */
+    private fun fitComponentHeaderLines(
+        componentName: String,
+        maxMarksTag: String,
+        maxWidth: Float,
+        baseTextSize: Float,
+        minTextSize: Float,
+        paint: Paint
+    ): Pair<List<String>, Float> {
+        val probe = Paint(paint)
+        val tokens = tokenizeHeaderText(componentName.trim())
+        var size = baseTextSize
+        while (size > minTextSize) {
+            probe.textSize = size
+            val fits = tokens.all { probe.measureText(it) <= maxWidth } &&
+                probe.measureText(maxMarksTag) <= maxWidth
+            if (fits) break
+            size = (size - 0.3f).coerceAtLeast(minTextSize)
+        }
+        probe.textSize = size
+        val nameLines = wrapTokens(tokens, maxWidth, probe).toMutableList()
+        if (nameLines.isEmpty()) {
+            nameLines.add(maxMarksTag)
+        } else {
+            val combinedLast = "${nameLines.last()} $maxMarksTag"
+            if (probe.measureText(combinedLast) <= maxWidth) {
+                nameLines[nameLines.lastIndex] = combinedLast
+            } else {
+                nameLines.add(maxMarksTag)
+            }
+        }
+        return nameLines to size
+    }
+
+    private fun tokenizeHeaderText(text: String): List<String> {
+        val out = mutableListOf<String>()
+        text.split(Regex("\\s+")).filter { it.isNotBlank() }.forEach { word ->
+            if (word.contains("/") && word.length > 8) {
+                val parts = word.split("/")
+                parts.forEachIndexed { i, p ->
+                    if (p.isNotBlank()) out.add(if (i < parts.lastIndex) "$p/" else p)
+                }
+            } else {
+                out.add(word)
+            }
+        }
+        return out
+    }
+
+    private fun wrapTokens(tokens: List<String>, maxWidth: Float, paint: Paint): List<String> {
+        val lines = mutableListOf<String>()
+        var current = ""
+        tokens.forEach { token ->
+            if (paint.measureText(token) > maxWidth) {
+                if (current.isNotEmpty()) {
+                    lines.add(current)
+                    current = ""
+                }
+                // Split an extra-long single token across lines without dropping characters
+                var rem = token
+                while (rem.isNotEmpty()) {
+                    var take = rem.length
+                    while (take > 1 && paint.measureText(rem.substring(0, take)) > maxWidth) {
+                        take--
+                    }
+                    lines.add(rem.substring(0, take))
+                    rem = rem.substring(take)
+                }
+            } else if (current.isEmpty()) {
+                current = token
+            } else {
+                val candidate = "$current $token"
+                if (paint.measureText(candidate) <= maxWidth) {
+                    current = candidate
+                } else {
+                    lines.add(current)
+                    current = token
+                }
+            }
+        }
+        if (current.isNotEmpty()) lines.add(current)
+        return lines
+    }
+
+    private fun drawCenteredLines(
+        canvas: Canvas,
+        lines: List<String>,
+        rect: RectF,
+        textSize: Float,
+        paint: Paint
+    ) {
+        if (lines.isEmpty()) return
+        paint.textSize = textSize
+        paint.textAlign = Paint.Align.CENTER
+        val lineStep = textSize + 1.8f
+        val blockH = (lines.size - 1) * lineStep
+        val centerX = (rect.left + rect.right) / 2f
+        val centerY = (rect.top + rect.bottom) / 2f
+        val fontMidOffset = -(paint.descent() + paint.ascent()) / 2f
+        val firstBaselineY = centerY - blockH / 2f + fontMidOffset
+        lines.forEachIndexed { idx, line ->
+            canvas.drawText(line, centerX, firstBaselineY + idx * lineStep, paint)
+        }
     }
 
     private fun decodeLogoBitmap(context: Context, logoBase64: String?): Bitmap? {

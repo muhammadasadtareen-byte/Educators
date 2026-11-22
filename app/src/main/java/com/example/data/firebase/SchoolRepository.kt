@@ -907,15 +907,19 @@ class SchoolRepository(
         val col = campusDoc(campus.id).collection("students")
         return try {
             requireUserId()
+            var seqIndex = 0
             drafts.chunked(400).forEach { chunk ->
                 val batch = db.batch()
                 chunk.forEachIndexed { idx, d ->
+                    seqIndex++
                     val safeName = d.name.trim().ifBlank { "Student ${idx + 1}" }.take(100)
                     val safeFather = d.fatherName.trim().take(100)
                     val safeRoll = d.rollNumber.trim().take(30)
                     val safeAdm = d.admissionNumber.trim().take(40)
+                    val seqPrefix = String.format(java.util.Locale.US, "%04d", seqIndex)
+                    val orderedDocId = shortId("stu_$seqPrefix")
                     batch.set(
-                        col.document(shortId("stu")),
+                        col.document(orderedDocId),
                         mapOf(
                             "ownerId" to campus.ownerId,
                             "memberUids" to campus.memberUids,

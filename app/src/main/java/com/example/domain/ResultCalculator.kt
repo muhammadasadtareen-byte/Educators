@@ -17,7 +17,43 @@ import com.example.data.model.Subject
 import com.example.data.model.SubjectResult
 import kotlin.math.roundToInt
 
+enum class StudentResultSortOrder(val label: String) {
+    ENTRY_ORDER("Entry Order"),
+    HIGHEST_TO_LOWEST("Highest to Lowest Grade"),
+    ROLL_AND_NAME("Roll / Name")
+}
+
 object ResultCalculator {
+
+    val studentEntryOrderComparator: Comparator<Student> = compareBy<Student>(
+        { it.createdAt?.seconds ?: Long.MAX_VALUE },
+        { it.createdAt?.nanoseconds ?: Int.MAX_VALUE },
+        { it.rollNumber.trim().toIntOrNull() ?: Int.MAX_VALUE },
+        { it.rollNumber.trim().ifBlank { "\uFFFF" } },
+        { it.id },
+        { it.name.lowercase() }
+    )
+
+    fun sortStudentSummaries(
+        summaries: List<StudentResultSummary>,
+        order: StudentResultSortOrder
+    ): List<StudentResultSummary> = when (order) {
+        StudentResultSortOrder.ENTRY_ORDER -> summaries.sortedWith(
+            Comparator { a, b -> studentEntryOrderComparator.compare(a.student, b.student) }
+        )
+        StudentResultSortOrder.HIGHEST_TO_LOWEST -> summaries.sortedWith(
+            compareBy<StudentResultSummary> { if (it.status == ResultStatus.COMPLETE) 0 else 1 }
+                .thenBy { if (it.passed) 0 else 1 }
+                .thenByDescending { (it.overallPercentage * 100.0).roundToInt() }
+                .thenByDescending { (it.totalObtainedMarks * 100.0).roundToInt() }
+                .thenBy(studentEntryOrderComparator) { it.student }
+        )
+        StudentResultSortOrder.ROLL_AND_NAME -> summaries.sortedWith(
+            compareBy<StudentResultSummary> { it.student.rollNumber.trim().toIntOrNull() ?: Int.MAX_VALUE }
+                .thenBy { it.student.rollNumber.trim().ifBlank { "\uFFFF" } }
+                .thenBy { it.student.name.lowercase() }
+        )
+    }
 
     fun defaultGradingTemplates(): List<GradingRule> = listOf(
         GradingRule(examId = "DEFAULT", minPercentage = 90.0, maxPercentage = 100.0, grade = "A+", remarks = "Outstanding", passing = true, sortOrder = 1),

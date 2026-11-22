@@ -129,10 +129,7 @@ object XlsxEngine {
             "Roll No", "Admission No", "Student Name", "Father's Name",
             "Subject", "Max Marks", "Passing Marks", "Obtained Marks", "Percentage", "Grade", "Status"
         )
-        val rows = summaries.sortedWith(
-            compareBy<StudentResultSummary> { it.student.rollNumber.toIntOrNull() ?: Int.MAX_VALUE }
-                .thenBy { it.student.name }
-        ).map { summary ->
+        val rows = summaries.map { summary ->
             val sr = summary.subjectResults.firstOrNull { it.subject.id == subject.id }
             val obtainedCell = if (sr?.obtainedMarks != null) CellValue.Number(sr.obtainedMarks) else CellValue.Text("Pending")
             val pctCell = if (sr?.percentage != null) CellValue.Percent(sr.percentage / 100.0) else CellValue.Text("-")
@@ -305,11 +302,19 @@ object XlsxEngine {
             val spans = mutableListOf<Pair<Int, Int>>()
             var colCursor = 1
 
+            val sampleSummary = summaries.firstOrNull()
             sortedSubjects.forEach { sub ->
                 val startCol = colCursor
+                val subEffectiveComps = sampleSummary
+                    ?.subjectResults
+                    ?.firstOrNull { it.subject.id == sub.id }
+                    ?.effectiveComponents
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: examComponents
                 examComponents.forEachIndexed { idx, comp ->
+                    val effMax = subEffectiveComps.firstOrNull { it.id == comp.id }?.maxMarks ?: comp.maxMarks
                     topList.add(if (idx == 0) sub.name else "")
-                    subList.add("${comp.name} (${ResultCalculator.formatMarks(comp.maxMarks)})")
+                    subList.add("${comp.name} (${ResultCalculator.formatMarks(effMax)})")
                     colCursor++
                 }
                 if (examComponents.size > 1) {
@@ -792,7 +797,21 @@ object XlsxEngine {
         sb.append("<cols>")
         (0 until totalCols).forEach { idx ->
             val colNum = idx + 1
-            val width = if (idx == 0) 24 else 14
+            val headerLen = sheet.headers.getOrNull(idx)?.length ?: 0
+            val groupLen = sheet.groupHeaders?.getOrNull(idx)?.length ?: 0
+            val maxCellLen = sheet.rows.maxOfOrNull { row ->
+                when (val cell = row.getOrNull(idx)) {
+                    is CellValue.Text -> cell.value.length
+                    is CellValue.Number -> 8
+                    is CellValue.Percent -> 8
+                    null -> 0
+                }
+            } ?: 0
+            val width = if (idx == 0) {
+                maxOf(24, (maxCellLen + 3).coerceAtMost(36))
+            } else {
+                maxOf(14, (maxOf(headerLen, groupLen, maxCellLen) + 3).coerceAtMost(28))
+            }
             sb.append("""<col min="$colNum" max="$colNum" width="$width" customWidth="1"/>""")
         }
         sb.append("</cols>")
@@ -964,7 +983,7 @@ object XlsxEngine {
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
     <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
-    <xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+    <xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
     <xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
   </cellXfs>
 </styleSheet>"""

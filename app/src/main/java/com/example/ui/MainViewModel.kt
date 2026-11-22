@@ -262,7 +262,7 @@ class MainViewModel(
                 classes = core.classes.sortedBy { it.sortOrder },
                 sections = acad.sections.sortedBy { it.name },
                 subjects = acad.subjects.sortedWith(compareBy<Subject> { it.sortOrder }.thenBy { it.name }),
-                students = acad.students.sortedWith(compareBy<Student> { it.rollNumber.toIntOrNull() ?: Int.MAX_VALUE }.thenBy { it.rollNumber }.thenBy { it.name }),
+                students = acad.students.sortedWith(ResultCalculator.studentEntryOrderComparator),
                 marks = acad.marks,
                 gradingRules = acad.rules.sortedBy { it.sortOrder },
                 resultRecords = ctrl.records,

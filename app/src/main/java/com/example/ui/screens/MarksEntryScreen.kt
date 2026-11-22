@@ -152,7 +152,7 @@ fun MarksEntryScreen(
                     it.sectionId == selectedSectionId &&
                     (snapshot.selectedSessionId.isBlank() || it.sessionId == snapshot.selectedSessionId)
             }
-            .sortedWith(compareBy<Student> { it.rollNumber.toIntOrNull() ?: Int.MAX_VALUE }.thenBy { it.rollNumber }.thenBy { it.name })
+            .sortedWith(ResultCalculator.studentEntryOrderComparator)
     }
 
     val marksByStudentId = remember(snapshot.activeExamMarks, selectedSubjectId) {

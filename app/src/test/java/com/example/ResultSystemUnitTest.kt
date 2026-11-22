@@ -807,6 +807,78 @@ class ResultSystemUnitTest {
         assertEquals("A", finalSummary.overallGrade)
     }
 
+    @Test
+    fun `sortStudentSummaries defaults to entry order and supports highest to lowest grade`() {
+        val t1 = com.google.firebase.Timestamp(1_700_000_001L, 0)
+        val t2 = com.google.firebase.Timestamp(1_700_000_002L, 0)
+        val t3 = com.google.firebase.Timestamp(1_700_000_003L, 0)
+        val t4 = com.google.firebase.Timestamp(1_700_000_004L, 0)
+
+        // Entered order: Zara (1st, lowest passing) -> Bilal (2nd, failed compulsory) -> Ali (3rd, topper) -> Hamza (4th, pending)
+        val sZara = Student(id = "stu_a", name = "Zara", classId = "cls_5", sectionId = "sec_a", sessionId = "sess_1", createdAt = t1)
+        val sBilal = Student(id = "stu_b", name = "Bilal", classId = "cls_5", sectionId = "sec_a", sessionId = "sess_1", createdAt = t2)
+        val sAli = Student(id = "stu_c", name = "Ali", classId = "cls_5", sectionId = "sec_a", sessionId = "sess_1", createdAt = t3)
+        val sHamza = Student(id = "stu_d", name = "Hamza", classId = "cls_5", sectionId = "sec_a", sessionId = "sess_1", createdAt = t4)
+
+        val compExam = defaultExam.copy(
+            id = "exam_task1",
+            name = "ASSESSMENT TASK-I (TERM II)",
+            components = listOf(
+                com.example.data.model.ExamComponent("task_01", "Assessment Task 01", 30.0),
+                com.example.data.model.ExamComponent("quiz", "Quiz", 20.0)
+            )
+        )
+        val marks = listOf(
+            // Zara: Math 25/50 (50%), Isl 25/50 (50%) -> 50% Grade C (Pass)
+            MarkEntry(id = "m1", studentId = "stu_a", subjectId = "sub_math", obtainedMarks = 25.0, componentMarks = mapOf("task_01" to 15.0, "quiz" to 10.0)),
+            MarkEntry(id = "m2", studentId = "stu_a", subjectId = "sub_isl", obtainedMarks = 25.0, componentMarks = mapOf("task_01" to 15.0, "quiz" to 10.0)),
+            // Bilal: Math 45/50, Isl 10/50 (Fail compulsory!) -> 55% Grade F* (Fail)
+            MarkEntry(id = "m3", studentId = "stu_b", subjectId = "sub_math", obtainedMarks = 45.0, componentMarks = mapOf("task_01" to 25.0, "quiz" to 20.0)),
+            MarkEntry(id = "m4", studentId = "stu_b", subjectId = "sub_isl", obtainedMarks = 10.0, componentMarks = mapOf("task_01" to 5.0, "quiz" to 5.0)),
+            // Ali: Math 48/50, Isl 47/50 -> 95% Grade A+ (Pass)
+            MarkEntry(id = "m5", studentId = "stu_c", subjectId = "sub_math", obtainedMarks = 48.0, componentMarks = mapOf("task_01" to 28.0, "quiz" to 20.0)),
+            MarkEntry(id = "m6", studentId = "stu_c", subjectId = "sub_isl", obtainedMarks = 47.0, componentMarks = mapOf("task_01" to 27.0, "quiz" to 20.0)),
+            // Hamza: Only Math entered -> Pending
+            MarkEntry(id = "m7", studentId = "stu_d", subjectId = "sub_math", obtainedMarks = 50.0, componentMarks = mapOf("task_01" to 30.0, "quiz" to 20.0))
+        )
+
+        val summaries = ResultCalculator.computeClassResults(
+            students = listOf(sAli, sHamza, sZara, sBilal),
+            subjects = listOf(math, islamiat),
+            marks = marks,
+            resultRecords = emptyList(),
+            classesById = mapOf(schoolClass.id to schoolClass),
+            sectionsById = mapOf(sectionA.id to sectionA),
+            sessionsById = mapOf(session.id to session),
+            examination = compExam,
+            allGradingRules = ResultCalculator.defaultGradingTemplates()
+        )
+
+        // 1. Entry Order keeps exact sequence entered: Zara -> Bilal -> Ali -> Hamza
+        val entryOrdered = ResultCalculator.sortStudentSummaries(summaries, com.example.domain.StudentResultSortOrder.ENTRY_ORDER)
+        assertEquals(listOf("Zara", "Bilal", "Ali", "Hamza"), entryOrdered.map { it.student.name })
+
+        // 2. Highest to Lowest Grade: Ali (A+) -> Zara (C) -> Bilal (F*) -> Hamza (Pending)
+        val gradeOrdered = ResultCalculator.sortStudentSummaries(summaries, com.example.domain.StudentResultSortOrder.HIGHEST_TO_LOWEST)
+        assertEquals(listOf("Ali", "Zara", "Bilal", "Hamza"), gradeOrdered.map { it.student.name })
+
+        // 3. Consolidated Excel export preserves Entry Order & full Assessment Task 01 (30) header
+        val xlsx = XlsxEngine.exportCompleteClassResultSheet(
+            className = "Class 5",
+            sectionLabel = "A",
+            examName = compExam.name,
+            sessionName = session.name,
+            subjects = listOf(math, islamiat),
+            summaries = entryOrdered,
+            examComponents = compExam.components
+        )
+        val sheetXml = readSheet1Xml(xlsx)
+        assertTrue(sheetXml.contains("Assessment Task 01 (30)"))
+        assertTrue(sheetXml.contains("Quiz (20)"))
+        assertTrue(sheetXml.indexOf("Zara") < sheetXml.indexOf("Bilal"))
+        assertTrue(sheetXml.indexOf("Bilal") < sheetXml.indexOf("Ali"))
+    }
+
     private fun readSheet1Xml(xlsxBytes: ByteArray): String {
         java.util.zip.ZipInputStream(ByteArrayInputStream(xlsxBytes)).use { zis ->
             var entry = zis.nextEntry
