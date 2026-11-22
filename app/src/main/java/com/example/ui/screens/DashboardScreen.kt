@@ -62,13 +62,22 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material3.IconButton
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
 import com.example.AppRoute
+import com.example.BuildConfig
 import com.example.R
 import com.example.data.model.ExamComponent
 import com.example.data.model.ExamType
 import com.example.data.model.Examination
 import com.example.data.model.StaffRole
+import com.example.domain.AppUpdateChecker
 import com.example.domain.ResultCalculator
+import com.example.domain.UpdateCheckResult
 import com.example.ui.SchoolSnapshot
 import com.example.ui.theme.AmberPending
 import com.example.ui.theme.AmberPendingContainer
@@ -90,14 +99,93 @@ fun DashboardScreen(
     onCreateExam: (sessionId: String, name: String, examType: ExamType, useCustomGrading: Boolean, sortOrder: Long, components: List<ExamComponent>) -> Unit = { _, _, _, _, _, _ -> },
     onDeleteExam: (examId: String) -> Unit = {}
 ) {
+    val context = LocalContext.current
     var editingExam by remember { mutableStateOf<Examination?>(null) }
     var showCreateExamDialog by remember { mutableStateOf(false) }
+    var availableUpdate by remember { mutableStateOf<UpdateCheckResult.UpdateAvailable?>(null) }
+    var updateBannerDismissed by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        val check = AppUpdateChecker.checkLatestRelease(BuildConfig.VERSION_NAME)
+        if (check is UpdateCheckResult.UpdateAvailable) {
+            availableUpdate = check
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        // Automatic GitHub Release Update Banner (shown only when a newer version is pushed to GitHub)
+        val pendingUpdate = availableUpdate
+        if (pendingUpdate != null && !updateBannerDismissed) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = EmeraldPassContainer),
+                    border = BorderStroke(1.5.dp, EmeraldPass.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    Icons.Default.SystemUpdate,
+                                    contentDescription = null,
+                                    tint = EmeraldPass,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Column {
+                                    Text(
+                                        text = "New Version v${pendingUpdate.latestVersion} Ready",
+                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = EducatorsNavy
+                                    )
+                                    Text(
+                                        text = "Installed: v${pendingUpdate.currentVersion} • Tap to download & update without losing data",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = EducatorsNavy.copy(alpha = 0.85f)
+                                    )
+                                }
+                            }
+                            IconButton(onClick = { updateBannerDismissed = true }) {
+                                Icon(Icons.Default.Close, contentDescription = "Dismiss update banner", tint = EducatorsNavy)
+                            }
+                        }
+                        Button(
+                            onClick = {
+                                AppUpdateChecker.openExternalUrl(
+                                    context,
+                                    pendingUpdate.apkDownloadUrl ?: pendingUpdate.releasePageUrl
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = EmeraldPass),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 44.dp)
+                                .testTag("dashboard_download_update_btn")
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Download & Install v${pendingUpdate.latestVersion}")
+                        }
+                    }
+                }
+            }
+        }
+
         // School Hero Banner
         item {
             Card(

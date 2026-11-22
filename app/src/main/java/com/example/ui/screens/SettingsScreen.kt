@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -28,16 +29,22 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -71,6 +78,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.credentials.CredentialManager
+import com.example.BuildConfig
 import com.example.R
 import com.example.data.firebase.AuthHelper
 import com.example.data.model.ExamComponent
@@ -80,14 +88,26 @@ import com.example.data.model.GradingRule
 import com.example.data.model.StaffMember
 import com.example.data.model.StaffRole
 import com.example.data.model.StudentEntryField
+import com.example.domain.AppUpdateChecker
+import com.example.domain.DriveBackupEngine
 import com.example.domain.PdfReportGenerator
+import com.example.domain.UpdateCheckResult
 import com.example.ui.MainViewModel
 import com.example.ui.SchoolSnapshot
 import com.example.ui.theme.AmberPending
+import com.example.ui.theme.AmberPendingContainer
 import com.example.ui.theme.CrimsonFail
 import com.example.ui.theme.EducatorsBlue
+import com.example.ui.theme.EducatorsBlueSurface
 import com.example.ui.theme.EducatorsNavy
 import com.example.ui.theme.EmeraldPass
+import com.example.ui.theme.EmeraldPassContainer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -180,6 +200,65 @@ fun SettingsScreen(
     var showAddStaffDialog by remember { mutableStateOf(false) }
     var editingStaff by remember { mutableStateOf<StaffMember?>(null) }
     var pendingDeleteStaff by remember { mutableStateOf<StaffMember?>(null) }
+
+    // Google Drive Backup state & SAF launchers
+    val backupPrefs = remember(context) { context.getSharedPreferences("educators_backup_prefs", Context.MODE_PRIVATE) }
+    var lastBackupTime by remember(snapshot.campus.id) {
+        mutableStateOf(backupPrefs.getString("last_backup_" + snapshot.campus.id, "").orEmpty())
+    }
+    var isBackingUp by remember { mutableStateOf(false) }
+
+    fun markBackupCompleted() {
+        val stamp = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date())
+        backupPrefs.edit().putString("last_backup_" + snapshot.campus.id, stamp).apply()
+        lastBackupTime = stamp
+    }
+
+    val createExcelDriveLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                isBackingUp = true
+                val ok = withContext(Dispatchers.IO) {
+                    val bytes = DriveBackupEngine.buildFullBackupExcelBytes(snapshot)
+                    FileExportHelper.writeBytesToUri(context, uri, bytes)
+                }
+                isBackingUp = false
+                if (ok) {
+                    markBackupCompleted()
+                    viewModel.postMessage("Full Excel backup saved to Google Drive / selected folder.")
+                } else {
+                    viewModel.postMessage("Could not write backup file. Please try again.")
+                }
+            }
+        }
+    }
+
+    val createJsonDriveLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                isBackingUp = true
+                val ok = withContext(Dispatchers.IO) {
+                    val bytes = DriveBackupEngine.buildFullBackupJson(snapshot).toByteArray(Charsets.UTF_8)
+                    FileExportHelper.writeBytesToUri(context, uri, bytes)
+                }
+                isBackingUp = false
+                if (ok) {
+                    markBackupCompleted()
+                    viewModel.postMessage("Full JSON backup saved to Google Drive / selected folder.")
+                } else {
+                    viewModel.postMessage("Could not write JSON backup file. Please try again.")
+                }
+            }
+        }
+    }
+
+    // App Update Checker (GitHub Releases)
+    var checkingUpdate by remember { mutableStateOf(false) }
+    var updateResult by remember { mutableStateOf<UpdateCheckResult?>(null) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -409,6 +488,327 @@ fun SettingsScreen(
                         Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
                         Text("Sign Out")
+                    }
+                }
+            }
+        }
+
+        // 1B. Google Drive Backup (Available to both Admin & Teachers)
+        item {
+            val visibleClassIds = snapshot.visibleClasses.map { it.id }.toSet()
+            val backupStudentCount = snapshot.students.count { it.classId in visibleClassIds }
+            val backupMarkCount = snapshot.marks.count { it.classId in visibleClassIds }
+            val backupAttCount = snapshot.attendanceRecords.count { it.classId in visibleClassIds }
+
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, EducatorsBlue.copy(alpha = 0.45f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.CloudUpload,
+                                contentDescription = null,
+                                tint = EducatorsBlue,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Text(
+                                text = "Google Drive Backup",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = EducatorsNavy
+                            )
+                        }
+                        StatusPill(
+                            text = if (lastBackupTime.isNotBlank()) "Backed Up" else "Ready",
+                            isPositive = lastBackupTime.isNotBlank(),
+                            isWarning = lastBackupTime.isBlank()
+                        )
+                    }
+
+                    Text(
+                        text = "Your live data syncs in Firebase Cloud automatically. Use this anytime to save a complete copy (Students, Parent WhatsApp, Classes, Subjects, Marks & Daily Attendance) to your Google Drive.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = EducatorsBlueSurface,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "$backupStudentCount Students  •  $backupMarkCount Marks  •  $backupAttCount Attendance Days",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = EducatorsNavy
+                            )
+                            Text(
+                                text = if (lastBackupTime.isNotBlank()) "Last Drive backup: $lastBackupTime" else "No Google Drive backup saved from this phone yet",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = EducatorsBlue
+                            )
+                        }
+                    }
+
+                    Button(
+                        enabled = !isBackingUp,
+                        onClick = {
+                            scope.launch {
+                                isBackingUp = true
+                                val fileName = DriveBackupEngine.buildBackupFileName(snapshot.campus.campusName, "xlsx")
+                                val file = withContext(Dispatchers.IO) {
+                                    val bytes = DriveBackupEngine.buildFullBackupExcelBytes(snapshot)
+                                    FileExportHelper.writeBytesToCache(context, fileName, bytes)
+                                }
+                                isBackingUp = false
+                                markBackupCompleted()
+                                val openedDriveDirectly = FileExportHelper.saveToGoogleDriveApp(
+                                    context = context,
+                                    file = file,
+                                    mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    title = "Save School Backup to Google Drive"
+                                )
+                                viewModel.postMessage(
+                                    if (openedDriveDirectly) {
+                                        "Opened Google Drive — tap Save to store $fileName."
+                                    } else {
+                                        "Select 'Save to Drive' to store $fileName."
+                                    }
+                                )
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = EducatorsNavy),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("save_to_google_drive_excel_btn")
+                    ) {
+                        if (isBackingUp) {
+                            CircularProgressIndicator(
+                                color = Color.White,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        } else {
+                            Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Text("Save Complete Excel Backup to Google Drive")
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            enabled = !isBackingUp,
+                            onClick = {
+                                val fileName = DriveBackupEngine.buildBackupFileName(snapshot.campus.campusName, "xlsx")
+                                createExcelDriveLauncher.launch(fileName)
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 46.dp)
+                                .testTag("create_drive_doc_excel_btn")
+                        ) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Pick Drive Folder (.xlsx)", maxLines = 1)
+                        }
+                        OutlinedButton(
+                            enabled = !isBackingUp,
+                            onClick = {
+                                val fileName = DriveBackupEngine.buildBackupFileName(snapshot.campus.campusName, "json")
+                                createJsonDriveLauncher.launch(fileName)
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 46.dp)
+                                .testTag("save_to_google_drive_json_btn")
+                        ) {
+                            Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("JSON Backup", maxLines = 1)
+                        }
+                    }
+                }
+            }
+        }
+
+        // 1C. App Updates (GitHub Releases Checker)
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.SystemUpdate,
+                                contentDescription = null,
+                                tint = EducatorsBlue,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text("App Updates (GitHub)", style = MaterialTheme.typography.titleMedium, color = EducatorsNavy)
+                        }
+                        StatusPill(
+                            text = "v${BuildConfig.VERSION_NAME}",
+                            isPositive = true,
+                            isWarning = false
+                        )
+                    }
+
+                    Text(
+                        text = "Every push to GitHub automatically publishes a new APK release. Check here anytime to download and install the latest version over your existing app without losing any data.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    when (val res = updateResult) {
+                        is UpdateCheckResult.UpdateAvailable -> {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = EmeraldPassContainer,
+                                border = BorderStroke(1.dp, EmeraldPass.copy(alpha = 0.45f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = "New Update Available: v${res.latestVersion}",
+                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = EmeraldPass
+                                    )
+                                    Text(
+                                        text = "Installed: v${res.currentVersion}  →  Latest on GitHub: v${res.latestVersion}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = EducatorsNavy
+                                    )
+                                    Button(
+                                        onClick = {
+                                            AppUpdateChecker.openExternalUrl(
+                                                context,
+                                                res.apkDownloadUrl ?: res.releasePageUrl
+                                            )
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldPass),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = 46.dp)
+                                            .testTag("download_latest_apk_btn")
+                                    ) {
+                                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Download Update v${res.latestVersion}")
+                                    }
+                                }
+                            }
+                        }
+                        is UpdateCheckResult.UpToDate -> {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = EmeraldPassContainer,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "You are running the latest version (v${res.currentVersion}).",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = EmeraldPass,
+                                    modifier = Modifier.padding(10.dp)
+                                )
+                            }
+                        }
+                        is UpdateCheckResult.NoReleaseYet -> {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = AmberPendingContainer,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "No published GitHub Release found yet. Push to GitHub to trigger the automated Release APK build.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = EducatorsNavy,
+                                    modifier = Modifier.padding(10.dp)
+                                )
+                            }
+                        }
+                        is UpdateCheckResult.Error -> {
+                            Text(
+                                text = res.message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = CrimsonFail
+                            )
+                        }
+                        null -> {}
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            enabled = !checkingUpdate,
+                            onClick = {
+                                scope.launch {
+                                    checkingUpdate = true
+                                    updateResult = AppUpdateChecker.checkLatestRelease(BuildConfig.VERSION_NAME)
+                                    checkingUpdate = false
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = EducatorsBlue),
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 46.dp)
+                                .testTag("check_app_updates_btn")
+                        ) {
+                            if (checkingUpdate) {
+                                CircularProgressIndicator(
+                                    color = Color.White,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            } else {
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            }
+                            Spacer(Modifier.width(6.dp))
+                            Text("Check for Updates", maxLines = 1)
+                        }
+                        OutlinedButton(
+                            onClick = { AppUpdateChecker.openExternalUrl(context, AppUpdateChecker.RELEASES_PAGE_URL) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 46.dp)
+                                .testTag("open_github_releases_btn")
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("GitHub Releases", maxLines = 1)
+                        }
                     }
                 }
             }

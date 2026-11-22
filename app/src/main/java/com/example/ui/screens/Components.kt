@@ -1025,6 +1025,44 @@ object FileExportHelper {
         context.startActivity(Intent.createChooser(intent, title))
     }
 
+    /**
+     * Opens the Google Drive app directly ("Save to Drive") if installed, or falls back cleanly
+     * to Android's system share sheet so the user can pick Drive or any cloud storage provider.
+     */
+    fun saveToGoogleDriveApp(context: Context, file: File, mimeType: String, title: String): Boolean {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val driveIntent = Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, file.name)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            setPackage("com.google.android.apps.docs")
+        }
+        return try {
+            context.startActivity(driveIntent)
+            true
+        } catch (_: Exception) {
+            shareFile(context, file, mimeType, title)
+            false
+        }
+    }
+
+    /**
+     * Writes raw bytes directly to a user-selected Storage Access Framework document URI
+     * (e.g., Google Drive folder chosen via ActivityResultContracts.CreateDocument).
+     */
+    fun writeBytesToUri(context: Context, uri: Uri, bytes: ByteArray): Boolean {
+        return try {
+            context.contentResolver.openOutputStream(uri)?.use { out ->
+                out.write(bytes)
+                out.flush()
+            } ?: return false
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     fun viewPdfFile(context: Context, file: File) {
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         val intent = Intent(Intent.ACTION_VIEW).apply {

@@ -7,6 +7,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -53,3 +55,19 @@ jobs:
         with:
           name: educators-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+      - name: Publish GitHub Release APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION_NAME=$(grep -m1 'versionName' app/build.gradle.kts | sed -E 's/.*"([^"]+)".*/\1/')
+          TAG="v${VERSION_NAME}"
+          APK_FILE="EducatorsResults-${TAG}.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$APK_FILE"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK_FILE" --clobber
+          else
+            gh release create "$TAG" "$APK_FILE" \
+              --title "Educators Results ${TAG}" \
+              --notes "Automated APK build for version ${VERSION_NAME}. Download and tap the APK on your Android phone to update without losing any data." \
+              --latest
+          fi
