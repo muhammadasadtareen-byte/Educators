@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.firebase.SchoolRepository
 import com.example.data.model.AcademicSession
 import com.example.data.model.ActivityLog
+import com.example.data.model.AttendanceRecord
+import com.example.data.model.AttendanceStatus
 import com.example.data.model.Campus
 import com.example.data.model.ClassPerformanceStats
 import com.example.data.model.ClassSection
@@ -22,6 +24,7 @@ import com.example.data.model.StaffRole
 import com.example.data.model.Student
 import com.example.data.model.StudentResultSummary
 import com.example.data.model.Subject
+import com.example.domain.AttendanceHelper
 import com.example.domain.ImportedMarkDraft
 import com.example.domain.ImportedStudentDraft
 import com.example.domain.ImportedSubjectDraft
@@ -68,6 +71,7 @@ data class SchoolSnapshot(
     val accessibleCampuses: List<Campus> = emptyList(),
     val examSubjectConfigs: List<ExamSubjectConfig> = emptyList(),
     val activityLogs: List<ActivityLog> = emptyList(),
+    val attendanceRecords: List<AttendanceRecord> = emptyList(),
     val currentActorName: String = "",
     val currentActorEmail: String = ""
 ) {
@@ -219,9 +223,10 @@ class MainViewModel(
         val extraFlow = combine(
             repository.observeAccessibleCampuses(),
             repository.observeExamSubjectConfigs(campusId).catch { emit(emptyList()) },
-            repository.observeActivityLogs(campusId).catch { emit(emptyList()) }
-        ) { accessibleCampuses, subjectConfigs, logs ->
-            ExtraBundle(accessibleCampuses, subjectConfigs, logs)
+            repository.observeActivityLogs(campusId).catch { emit(emptyList()) },
+            repository.observeAttendance(campusId).catch { emit(emptyList()) }
+        ) { accessibleCampuses, subjectConfigs, logs, attendanceRecords ->
+            ExtraBundle(accessibleCampuses, subjectConfigs, logs, attendanceRecords)
         }
 
         return combine(
@@ -274,6 +279,7 @@ class MainViewModel(
                 accessibleCampuses = extra.accessibleCampuses,
                 examSubjectConfigs = extra.subjectConfigs,
                 activityLogs = sortedLogs,
+                attendanceRecords = extra.attendanceRecords.sortedByDescending { it.dateKey },
                 currentActorName = myStaff?.displayName.orEmpty(),
                 currentActorEmail = myStaff?.email.orEmpty()
             )
@@ -344,7 +350,8 @@ class MainViewModel(
         activeSessionId: String,
         activeExamId: String,
         logoBase64: String?,
-        secondaryLogoBase64: String? = campus.secondaryLogoBase64
+        secondaryLogoBase64: String? = campus.secondaryLogoBase64,
+        coordinatorWhatsApp: String = campus.coordinatorWhatsApp
     ) = runMutation("Campus settings saved.") {
         repository.updateCampusSettings(
             campus,
@@ -357,8 +364,16 @@ class MainViewModel(
             activeSessionId,
             activeExamId,
             logoBase64,
-            secondaryLogoBase64
+            secondaryLogoBase64,
+            coordinatorWhatsApp
         )
+    }
+
+    fun updateCampusCoordinatorWhatsApp(
+        campusId: String,
+        coordinatorWhatsApp: String
+    ) = runMutation("Coordinator WhatsApp number saved.") {
+        repository.updateCampusCoordinatorWhatsApp(campusId, coordinatorWhatsApp)
     }
 
     fun addSession(campus: Campus, name: String, current: Boolean) = runMutation("Academic session added.") {
@@ -518,11 +533,24 @@ class MainViewModel(
         classId: String,
         sectionId: String,
         sessionId: String,
-        photoBase64: String?
+        photoBase64: String?,
+        parentWhatsApp: String = ""
     ) = runMutation(if (studentId == null) "Student added." else "Student updated.") {
         val snap = currentSnapshot()
         val className = snap?.classesById?.get(classId)?.name.orEmpty()
-        val res = repository.saveStudent(campus, studentId, name, fatherName, rollNumber, admissionNumber, classId, sectionId, sessionId, photoBase64)
+        val res = repository.saveStudent(
+            campus,
+            studentId,
+            name,
+            fatherName,
+            rollNumber,
+            admissionNumber,
+            classId,
+            sectionId,
+            sessionId,
+            photoBase64,
+            parentWhatsApp
+        )
         if (res.isSuccess) {
             val isNew = studentId.isNullOrBlank()
             repository.logActivity(
@@ -539,6 +567,55 @@ class MainViewModel(
                 classId = classId,
                 className = className,
                 studentName = name.trim()
+            )
+        }
+        res
+    }
+
+    fun updateStudentParentWhatsApp(
+        campusId: String,
+        studentId: String,
+        studentName: String,
+        parentWhatsApp: String
+    ) = runMutation("Updated parent WhatsApp number for $studentName.") {
+        repository.updateStudentParentWhatsApp(campusId, studentId, parentWhatsApp)
+    }
+
+    fun saveAttendance(
+        campus: Campus,
+        sessionId: String,
+        classId: String,
+        sectionId: String,
+        dateKey: String,
+        statuses: Map<String, AttendanceStatus>,
+        note: String
+    ) = runMutation("Attendance saved for ${AttendanceHelper.formatDisplayDate(dateKey)}.") {
+        val snap = currentSnapshot()
+        val className = snap?.classesById?.get(classId)?.name.orEmpty()
+        val sectionName = snap?.sectionsById?.get(sectionId)?.name.orEmpty()
+        val res = repository.saveAttendanceRecord(
+            campus = campus,
+            sessionId = sessionId,
+            classId = classId,
+            sectionId = sectionId,
+            dateKey = dateKey,
+            statuses = statuses,
+            note = note,
+            actorName = snap?.currentActorName.orEmpty()
+        )
+        if (res.isSuccess) {
+            val present = statuses.values.count { it == AttendanceStatus.PRESENT }
+            val absent = statuses.values.count { it == AttendanceStatus.ABSENT }
+            val leave = statuses.values.count { it == AttendanceStatus.LEAVE }
+            repository.logActivity(
+                campus = campus,
+                actorName = snap?.currentActorName.orEmpty(),
+                actorEmail = snap?.currentActorEmail.orEmpty(),
+                actorRole = snap?.effectiveRole ?: StaffRole.TEACHER,
+                actionType = "ATTENDANCE_SAVED",
+                summary = "Saved attendance for $className-$sectionName on ${AttendanceHelper.formatDisplayDate(dateKey)} (P:$present, A:$absent, L:$leave)",
+                classId = classId,
+                className = "$className-$sectionName"
             )
         }
         res
@@ -775,6 +852,7 @@ class MainViewModel(
     private data class ExtraBundle(
         val accessibleCampuses: List<Campus>,
         val subjectConfigs: List<ExamSubjectConfig>,
-        val activityLogs: List<ActivityLog>
+        val activityLogs: List<ActivityLog>,
+        val attendanceRecords: List<AttendanceRecord>
     )
 }

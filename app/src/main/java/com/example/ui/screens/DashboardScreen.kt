@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Class
 import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.EventAvailable
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PendingActions
@@ -353,6 +354,7 @@ fun DashboardScreen(
         }
         item {
             val navItems = buildList {
+                add(Triple("Attendance", Icons.Default.EventAvailable, AppRoute.ATTENDANCE))
                 add(Triple("Students", Icons.Default.People, AppRoute.STUDENTS))
                 add(Triple("Marks Entry", Icons.Default.EditNote, AppRoute.MARKS_ENTRY))
                 add(Triple("Result Cards", Icons.Default.Badge, AppRoute.RESULT_CARDS))

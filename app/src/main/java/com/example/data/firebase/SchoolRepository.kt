@@ -4,6 +4,8 @@ import android.content.Context
 import com.example.R
 import com.example.data.model.AcademicSession
 import com.example.data.model.ActivityLog
+import com.example.data.model.AttendanceRecord
+import com.example.data.model.AttendanceStatus
 import com.example.data.model.Campus
 import com.example.data.model.ClassSection
 import com.example.data.model.ExamComponent
@@ -21,6 +23,7 @@ import com.example.data.model.StudentEntryField
 import com.example.data.model.StudentResultSummary
 import com.example.data.model.Subject
 import com.example.data.model.UserProfile
+import com.example.domain.AttendanceHelper
 import com.example.domain.ImportedMarkDraft
 import com.example.domain.ImportedStudentDraft
 import com.example.domain.ImportedSubjectDraft
@@ -366,6 +369,7 @@ class SchoolRepository(
     fun observeResultRecords(campusId: String) = observeCampusCollection(campusId, "result_records", ResultRecord::class.java)
     fun observeExamSubjectConfigs(campusId: String) = observeCampusCollection(campusId, "exam_subject_configs", ExamSubjectConfig::class.java)
     fun observeActivityLogs(campusId: String) = observeCampusCollection(campusId, "activity_logs", ActivityLog::class.java)
+    fun observeAttendance(campusId: String) = observeCampusCollection(campusId, "attendance", AttendanceRecord::class.java)
 
     // --- CAMPUS & SETTINGS MUTATIONS ---
 
@@ -380,7 +384,8 @@ class SchoolRepository(
         activeSessionId: String,
         activeExamId: String,
         logoBase64: String?,
-        secondaryLogoBase64: String? = campus.secondaryLogoBase64
+        secondaryLogoBase64: String? = campus.secondaryLogoBase64,
+        coordinatorWhatsApp: String = campus.coordinatorWhatsApp
     ): Result<Unit> {
         val path = campusDoc(campus.id).path
         return try {
@@ -390,6 +395,7 @@ class SchoolRepository(
                 "campusName" to campusName.trim().take(120),
                 "address" to address.trim().take(200),
                 "contact" to contact.trim().take(80),
+                "coordinatorWhatsApp" to coordinatorWhatsApp.trim().take(30),
                 "studentEntryFields" to studentEntryFields.take(10),
                 "allowDecimalMarks" to allowDecimalMarks,
                 "activeSessionId" to activeSessionId,
@@ -401,6 +407,28 @@ class SchoolRepository(
                 payload["logoBase64"] = logoBase64
             }
             campusDoc(campus.id).update(payload).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updateCampusCoordinatorWhatsApp(
+        campusId: String,
+        coordinatorWhatsApp: String
+    ): Result<Unit> {
+        val path = campusDoc(campusId).path
+        return try {
+            requireUserId()
+            campusDoc(campusId).update(
+                mapOf(
+                    "coordinatorWhatsApp" to coordinatorWhatsApp.trim().take(30),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -858,12 +886,14 @@ class SchoolRepository(
         classId: String,
         sectionId: String,
         sessionId: String,
-        photoBase64: String?
+        photoBase64: String?,
+        parentWhatsApp: String = ""
     ): Result<Unit> {
         val id = studentId?.takeIf { it.isNotBlank() } ?: shortId("stu")
         val ref = campusDoc(campus.id).collection("students").document(id)
         return try {
             requireUserId()
+            val cleanParentPhone = parentWhatsApp.trim().take(30)
             if (studentId.isNullOrBlank()) {
                 val payload = mapOf(
                     "ownerId" to campus.ownerId,
@@ -875,6 +905,7 @@ class SchoolRepository(
                     "classId" to classId,
                     "sectionId" to sectionId,
                     "sessionId" to sessionId,
+                    "parentWhatsApp" to cleanParentPhone,
                     "photoBase64" to photoBase64?.takeIf { it.isNotBlank() },
                     "createdAt" to FieldValue.serverTimestamp(),
                     "updatedAt" to FieldValue.serverTimestamp()
@@ -889,6 +920,7 @@ class SchoolRepository(
                     "classId" to classId,
                     "sectionId" to sectionId,
                     "sessionId" to sessionId,
+                    "parentWhatsApp" to cleanParentPhone,
                     "photoBase64" to photoBase64?.takeIf { it.isNotBlank() },
                     "updatedAt" to FieldValue.serverTimestamp()
                 ).filterValues { it != null }
@@ -899,6 +931,102 @@ class SchoolRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, if (studentId == null) OperationType.CREATE else OperationType.UPDATE, ref.path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updateStudentParentWhatsApp(
+        campusId: String,
+        studentId: String,
+        parentWhatsApp: String
+    ): Result<Unit> {
+        val ref = campusDoc(campusId).collection("students").document(studentId)
+        return try {
+            requireUserId()
+            ref.update(
+                mapOf(
+                    "parentWhatsApp" to parentWhatsApp.trim().take(30),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, ref.path)
+            Result.failure(e)
+        }
+    }
+
+    // --- DAILY ATTENDANCE ---
+
+    suspend fun saveAttendanceRecord(
+        campus: Campus,
+        sessionId: String,
+        classId: String,
+        sectionId: String,
+        dateKey: String,
+        statuses: Map<String, AttendanceStatus>,
+        note: String,
+        actorName: String
+    ): Result<Unit> {
+        val docId = AttendanceHelper.attendanceDocId(dateKey, classId, sectionId)
+        val ref = campusDoc(campus.id).collection("attendance").document(docId)
+        return try {
+            val uid = requireUserId()
+            require(!AttendanceHelper.isWeekend(dateKey)) {
+                "Saturday and Sunday are school off days. Please select a weekday (Monday - Friday)."
+            }
+            require(classId.isNotBlank() && sectionId.isNotBlank()) {
+                "Please select a Class and Section."
+            }
+            val cleanRecords = statuses.entries
+                .take(250)
+                .associate { (stuId, st) -> stuId to st.name }
+            val safeActorName = actorName.trim().ifBlank {
+                auth.currentUser?.displayName?.takeIf { it.isNotBlank() }
+                    ?: auth.currentUser?.email?.substringBefore("@")
+                    ?: "Staff Member"
+            }.take(100)
+            val safeSessionId = sessionId.ifBlank { campus.activeSessionId }.ifBlank { "default_session" }
+            val safeNote = note.trim().take(300)
+
+            val existingSnap = ref.get().await()
+            if (existingSnap.exists()) {
+                ref.update(
+                    mapOf(
+                        "memberUids" to campus.memberUids,
+                        "sessionId" to safeSessionId,
+                        "records" to cleanRecords,
+                        "note" to safeNote,
+                        "markedByUid" to uid,
+                        "markedByName" to safeActorName,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            } else {
+                ref.set(
+                    mapOf(
+                        "ownerId" to campus.ownerId,
+                        "memberUids" to campus.memberUids,
+                        "sessionId" to safeSessionId,
+                        "classId" to classId,
+                        "sectionId" to sectionId,
+                        "dateKey" to dateKey.trim(),
+                        "records" to cleanRecords,
+                        "note" to safeNote,
+                        "markedByUid" to uid,
+                        "markedByName" to safeActorName,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, ref.path)
             Result.failure(e)
         }
     }
@@ -1520,7 +1648,7 @@ class SchoolRepository(
         val collections = listOf(
             "staff", "sessions", "examinations", "classes", "sections",
             "subjects", "students", "marks", "grading_rules", "result_records",
-            "exam_subject_configs", "activity_logs"
+            "exam_subject_configs", "activity_logs", "attendance"
         )
         val targetSet = memberUids.toSet()
         val docRefsWithCollection = mutableListOf<Pair<String, com.google.firebase.firestore.DocumentReference>>()
@@ -1553,6 +1681,8 @@ class SchoolRepository(
                         updates["enteredByUid"] = adminUid
                     } else if (colName == "exam_subject_configs") {
                         updates["updatedByUid"] = adminUid
+                    } else if (colName == "attendance") {
+                        updates["markedByUid"] = adminUid
                     }
                     batch.update(docRef, updates)
                 }

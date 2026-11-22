@@ -25,6 +25,7 @@
         "campusName": { "type": "string", "description": "Campus subtitle" },
         "address": { "type": "string", "description": "Optional campus street address" },
         "contact": { "type": "string", "description": "Optional campus phone/contact" },
+        "coordinatorWhatsApp": { "type": "string", "description": "School coordinator WhatsApp number for daily attendance reports" },
         "studentEntryFields": { "type": "array", "description": "Enabled optional student entry fields" },
         "logoBase64": { "type": "string", "description": "Optional compressed school logo base64" },
         "activeSessionId": { "type": "string", "description": "Active academic session ID" },
@@ -145,6 +146,7 @@
         "classId": { "type": "string" },
         "sectionId": { "type": "string" },
         "sessionId": { "type": "string" },
+        "parentWhatsApp": { "type": "string", "description": "Parent WhatsApp contact number for attendance notifications" },
         "photoBase64": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
@@ -215,6 +217,26 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["ownerId", "memberUids", "sessionId", "examId", "classId", "sectionId", "studentId", "totalMaxMarks", "totalObtainedMarks", "percentage", "grade", "passed", "status", "position", "createdAt", "updatedAt"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Daily attendance record per class, section, and weekday date",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "sessionId": { "type": "string" },
+        "classId": { "type": "string" },
+        "sectionId": { "type": "string" },
+        "dateKey": { "type": "string", "description": "Weekday date in yyyy-MM-dd format" },
+        "records": { "type": "object", "description": "Map of studentId to PRESENT, ABSENT, or LEAVE" },
+        "note": { "type": "string", "description": "Optional daily attendance message or remark" },
+        "markedByUid": { "type": "string" },
+        "markedByName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "memberUids", "sessionId", "classId", "sectionId", "dateKey", "records", "markedByUid", "markedByName", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -265,6 +287,10 @@
     "/campuses/{campusId}/result_records/{recordId}": {
       "schema": { "$ref": "#/entities/ResultRecord" },
       "description": "Result records"
+    },
+    "/campuses/{campusId}/attendance/{attendanceId}": {
+      "schema": { "$ref": "#/entities/AttendanceRecord" },
+      "description": "Daily class attendance records by date"
     }
   }
 }

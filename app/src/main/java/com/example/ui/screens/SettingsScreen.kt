@@ -106,6 +106,7 @@ fun SettingsScreen(
     var campusName by remember(snapshot.campus.campusName) { mutableStateOf(snapshot.campus.campusName) }
     var campusAddress by remember(snapshot.campus.address) { mutableStateOf(snapshot.campus.address) }
     var campusContact by remember(snapshot.campus.contact) { mutableStateOf(snapshot.campus.contact) }
+    var coordinatorWhatsApp by remember(snapshot.campus.coordinatorWhatsApp) { mutableStateOf(snapshot.campus.coordinatorWhatsApp) }
     var studentEntryFields by remember(snapshot.campus.studentEntryFields) {
         mutableStateOf(snapshot.campus.studentEntryFields.toSet())
     }
@@ -134,7 +135,8 @@ fun SettingsScreen(
                     activeSessionId = snapshot.selectedSessionId,
                     activeExamId = snapshot.selectedExamId,
                     logoBase64 = encoded,
-                    secondaryLogoBase64 = secondaryLogoBase64
+                    secondaryLogoBase64 = secondaryLogoBase64,
+                    coordinatorWhatsApp = coordinatorWhatsApp
                 )
             }
         }
@@ -576,6 +578,17 @@ fun SettingsScreen(
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
+                        OutlinedTextField(
+                            value = coordinatorWhatsApp,
+                            onValueChange = { coordinatorWhatsApp = it.take(30) },
+                            label = { Text("School Coordinator WhatsApp (Daily Attendance)") },
+                            placeholder = { Text("e.g. 0300-1234567 or +923001234567") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("settings_coordinator_whatsapp_input")
+                        )
 
                         Text(
                             text = "Default Optional Entries When Adding Students",
@@ -588,6 +601,7 @@ fun SettingsScreen(
                         ) {
                             val fieldOptions = listOf(
                                 StudentEntryField.FATHER_NAME to "Father's Name",
+                                StudentEntryField.PARENT_WHATSAPP to "Parent WhatsApp",
                                 StudentEntryField.ROLL_NUMBER to "Roll No",
                                 StudentEntryField.ADMISSION_NUMBER to "Admission No",
                                 StudentEntryField.PHOTO to "Photo"
@@ -633,7 +647,8 @@ fun SettingsScreen(
                                     activeSessionId = snapshot.selectedSessionId,
                                     activeExamId = snapshot.selectedExamId,
                                     logoBase64 = logoBase64,
-                                    secondaryLogoBase64 = secondaryLogoBase64
+                                    secondaryLogoBase64 = secondaryLogoBase64,
+                                    coordinatorWhatsApp = coordinatorWhatsApp
                                 )
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = EducatorsNavy),

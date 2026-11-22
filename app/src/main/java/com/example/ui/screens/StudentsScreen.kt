@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
@@ -28,8 +29,10 @@ import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -285,6 +288,26 @@ fun StudentsScreen(
                                         style = MaterialTheme.typography.labelSmall,
                                         color = EducatorsBlue
                                     )
+                                    val cleanParentPhone = st.parentWhatsApp.trim()
+                                    if (cleanParentPhone.isNotBlank()) {
+                                        Spacer(Modifier.height(2.dp))
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Phone,
+                                                contentDescription = null,
+                                                tint = EmeraldPass,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Text(
+                                                text = "Parent WA: $cleanParentPhone",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = EmeraldPass
+                                            )
+                                        }
+                                    }
                                 }
                                 if (canManageStudents) {
                                     IconButton(
@@ -324,7 +347,7 @@ fun StudentsScreen(
             snapshot = snapshot,
             existing = editingStudent,
             onDismiss = { showAddEditDialog = false },
-            onSave = { name, father, roll, adm, classId, sectionId, sessionId, photoBase64 ->
+            onSave = { name, father, roll, adm, classId, sectionId, sessionId, photoBase64, parentWhatsApp ->
                 viewModel.saveStudent(
                     campus = snapshot.campus,
                     studentId = editingStudent?.id,
@@ -335,7 +358,8 @@ fun StudentsScreen(
                     classId = classId,
                     sectionId = sectionId,
                     sessionId = sessionId,
-                    photoBase64 = photoBase64
+                    photoBase64 = photoBase64,
+                    parentWhatsApp = parentWhatsApp
                 )
                 showAddEditDialog = false
             }
@@ -370,13 +394,14 @@ private fun StudentFormDialog(
     snapshot: SchoolSnapshot,
     existing: Student?,
     onDismiss: () -> Unit,
-    onSave: (String, String, String, String, String, String, String, String?) -> Unit
+    onSave: (String, String, String, String, String, String, String, String?, String) -> Unit
 ) {
     val context = LocalContext.current
     var name by remember { mutableStateOf(existing?.name ?: "") }
     var fatherName by remember { mutableStateOf(existing?.fatherName?.takeIf { it != "-" } ?: "") }
     var rollNumber by remember { mutableStateOf(existing?.rollNumber ?: "") }
     var admissionNumber by remember { mutableStateOf(existing?.admissionNumber ?: "") }
+    var parentWhatsApp by remember { mutableStateOf(existing?.parentWhatsApp ?: "") }
     var selectedClassId by remember {
         mutableStateOf(existing?.classId ?: snapshot.visibleClasses.firstOrNull()?.id.orEmpty())
     }
@@ -396,10 +421,13 @@ private fun StudentFormDialog(
 
     var enabledFields by remember(existing, snapshot.campus.studentEntryFields) {
         val base = snapshot.campus.studentEntryFields.toMutableSet()
+        // Always include Parent WhatsApp by default so staff can easily enter or update parent numbers
+        base.add(StudentEntryField.PARENT_WHATSAPP)
         if (existing != null) {
             if (existing.fatherName.isNotBlank() && existing.fatherName != "-") base.add(StudentEntryField.FATHER_NAME)
             if (existing.rollNumber.isNotBlank()) base.add(StudentEntryField.ROLL_NUMBER)
             if (existing.admissionNumber.isNotBlank()) base.add(StudentEntryField.ADMISSION_NUMBER)
+            if (existing.parentWhatsApp.isNotBlank()) base.add(StudentEntryField.PARENT_WHATSAPP)
             if (!existing.photoBase64.isNullOrBlank()) base.add(StudentEntryField.PHOTO)
         }
         mutableStateOf(base.toSet())
@@ -441,6 +469,7 @@ private fun StudentFormDialog(
                     )
                     listOf(
                         StudentEntryField.FATHER_NAME to "Father's Name",
+                        StudentEntryField.PARENT_WHATSAPP to "Parent WhatsApp",
                         StudentEntryField.ROLL_NUMBER to "Roll No",
                         StudentEntryField.ADMISSION_NUMBER to "Admission No",
                         StudentEntryField.PHOTO to "Photo"
@@ -521,6 +550,19 @@ private fun StudentFormDialog(
                     }
                 }
 
+                if (enabledFields.contains(StudentEntryField.PARENT_WHATSAPP)) {
+                    OutlinedTextField(
+                        value = parentWhatsApp,
+                        onValueChange = { parentWhatsApp = it.take(30) },
+                        label = { Text("Parent WhatsApp Number (for Attendance)") },
+                        placeholder = { Text("e.g. 0300-1234567") },
+                        leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                        modifier = Modifier.fillMaxWidth().testTag("student_parent_whatsapp_input")
+                    )
+                }
+
                 SelectorDropdown(
                     label = "Class",
                     selectedText = snapshot.classesById[selectedClassId]?.name ?: "Select Class",
@@ -570,7 +612,8 @@ private fun StudentFormDialog(
                             selectedClassId,
                             selectedSectionId,
                             selectedSessionId,
-                            if (enabledFields.contains(StudentEntryField.PHOTO)) photoBase64 else null
+                            if (enabledFields.contains(StudentEntryField.PHOTO)) photoBase64 else null,
+                            if (enabledFields.contains(StudentEntryField.PARENT_WHATSAPP)) parentWhatsApp.trim() else ""
                         )
                     }
                 },

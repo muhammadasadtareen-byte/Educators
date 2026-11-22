@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.EventAvailable
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.People
@@ -95,6 +96,7 @@ fun TeacherActivityScreen(
     val totalMarksEditedCount = remember(logs) { logs.count { it.actionType == "TOTAL_MARKS_UPDATED" } }
     val studentsChangedCount = remember(logs) { logs.count { it.actionType.startsWith("STUDENT_") } }
     val examsChangedCount = remember(logs) { logs.count { it.actionType.startsWith("EXAM_") } }
+    val attendanceSavedCount = remember(logs) { logs.count { it.actionType == "ATTENDANCE_SAVED" } }
     val activeTeacherUids = remember(logs) {
         logs.filter { it.actorRole == StaffRole.TEACHER.name }.map { it.actorUid }.toSet()
     }
@@ -107,6 +109,7 @@ fun TeacherActivityScreen(
                 "TOTALS" -> log.actionType == "TOTAL_MARKS_UPDATED"
                 "STUDENTS" -> log.actionType.startsWith("STUDENT_")
                 "EXAMS" -> log.actionType.startsWith("EXAM_")
+                "ATTENDANCE" -> log.actionType == "ATTENDANCE_SAVED"
                 else -> log.actionType == selectedActionFilter
             }
             val matchesTeacher = selectedTeacherUid == "ALL" || log.actorUid == selectedTeacherUid
@@ -344,6 +347,12 @@ fun TeacherActivityScreen(
                             label = { Text("Exams ($examsChangedCount)") },
                             modifier = Modifier.testTag("activity_filter_exams")
                         )
+                        FilterChip(
+                            selected = selectedActionFilter == "ATTENDANCE",
+                            onClick = { selectedActionFilter = "ATTENDANCE" },
+                            label = { Text("Attendance ($attendanceSavedCount)") },
+                            modifier = Modifier.testTag("activity_filter_attendance")
+                        )
                     }
                 }
             }
@@ -401,6 +410,7 @@ fun ActivityLogCard(
         "EXAM_CREATED" -> QuadStyle(AmberPending, AmberPendingContainer, "Exam Created", Icons.AutoMirrored.Filled.Assignment)
         "EXAM_UPDATED" -> QuadStyle(EducatorsBlue, EducatorsBlueSurface, "Exam Updated", Icons.AutoMirrored.Filled.Assignment)
         "EXAM_DELETED" -> QuadStyle(CrimsonFail, CrimsonFailContainer, "Exam Deleted", Icons.AutoMirrored.Filled.Assignment)
+        "ATTENDANCE_SAVED" -> QuadStyle(EmeraldPass, EmeraldPassContainer, "Attendance Saved", Icons.Default.EventAvailable)
         "REMARKS_SAVED" -> QuadStyle(EmeraldPass, EmeraldPassContainer, "Remarks Saved", Icons.Default.EditNote)
         else -> QuadStyle(EmeraldPass, EmeraldPassContainer, "Marks Saved", Icons.Default.EditNote)
     }

@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Class
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.EventAvailable
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MenuBook
@@ -84,6 +85,7 @@ import com.example.data.model.StaffRole
 import com.example.ui.MainViewModel
 import com.example.ui.SchoolSnapshot
 import com.example.ui.UiState
+import com.example.ui.screens.AttendanceScreen
 import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.ClassResultsScreen
 import com.example.ui.screens.ClassesScreen
@@ -112,6 +114,7 @@ import kotlinx.coroutines.launch
 
 object AppRoute {
     const val DASHBOARD = "dashboard"
+    const val ATTENDANCE = "attendance"
     const val STUDENTS = "students"
     const val CLASSES = "classes"
     const val SUBJECTS = "subjects"
@@ -133,6 +136,7 @@ private data class NavDestination(
 
 private val ALL_DESTINATIONS = listOf(
     NavDestination(AppRoute.DASHBOARD, "Dashboard", Icons.Default.Dashboard),
+    NavDestination(AppRoute.ATTENDANCE, "Daily Attendance", Icons.Default.EventAvailable),
     NavDestination(AppRoute.STUDENTS, "Student Management", Icons.Default.People),
     NavDestination(AppRoute.CLASSES, "Class Management", Icons.Default.Class, adminOnly = true),
     NavDestination(AppRoute.SUBJECTS, "Subject Management", Icons.Default.MenuBook, adminOnly = true),
@@ -382,6 +386,7 @@ private fun MainAdaptiveShell(
                     bottomBar = {
                         val bottomItems = listOf(
                             NavDestination(AppRoute.DASHBOARD, "Home", Icons.Default.Dashboard),
+                            NavDestination(AppRoute.ATTENDANCE, "Attend.", Icons.Default.EventAvailable),
                             NavDestination(AppRoute.MARKS_ENTRY, "Marks", Icons.Default.EditNote),
                             NavDestination(AppRoute.RESULT_CARDS, "Cards", Icons.Default.Badge),
                             NavDestination(AppRoute.CLASS_RESULTS, "Sheet", Icons.Default.Assessment)
@@ -524,6 +529,9 @@ private fun AppNavHost(
                     viewModel.deleteExamination(snapshot.campus.id, examId)
                 }
             )
+        }
+        composable(AppRoute.ATTENDANCE) {
+            AttendanceScreen(snapshot = snapshot, viewModel = viewModel)
         }
         composable(AppRoute.STUDENTS) {
             StudentsScreen(snapshot = snapshot, viewModel = viewModel, onNavigate = onNavigate)

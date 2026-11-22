@@ -65,9 +65,10 @@ object StudentEntryField {
     const val FATHER_NAME = "FATHER_NAME"
     const val ROLL_NUMBER = "ROLL_NUMBER"
     const val ADMISSION_NUMBER = "ADMISSION_NUMBER"
+    const val PARENT_WHATSAPP = "PARENT_WHATSAPP"
     const val PHOTO = "PHOTO"
 
-    val defaultOptionalFields = listOf(FATHER_NAME, ROLL_NUMBER, ADMISSION_NUMBER)
+    val defaultOptionalFields = listOf(FATHER_NAME, ROLL_NUMBER, ADMISSION_NUMBER, PARENT_WHATSAPP)
 }
 
 object ExamComponentPresets {
@@ -94,6 +95,7 @@ data class Campus(
     val campusName: String = "ABBOTTABAD MAIN CAMPUS",
     val address: String = "",
     val contact: String = "",
+    val coordinatorWhatsApp: String = "",
     val studentEntryFields: List<String> = StudentEntryField.defaultOptionalFields,
     val logoBase64: String? = null,
     val secondaryLogoBase64: String? = null,
@@ -205,6 +207,7 @@ data class Student(
     val classId: String = "",
     val sectionId: String = "",
     val sessionId: String = "",
+    val parentWhatsApp: String = "",
     val photoBase64: String? = null,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
@@ -304,6 +307,35 @@ data class ActivityLog(
     val examName: String = "",
     val studentName: String = "",
     @ServerTimestamp val createdAt: Timestamp? = null
+)
+
+enum class AttendanceStatus(val label: String, val shortCode: String) {
+    PRESENT("Present", "P"),
+    ABSENT("Absent", "A"),
+    LEAVE("Leave", "L");
+
+    companion object {
+        fun fromRaw(raw: String?): AttendanceStatus =
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: PRESENT
+    }
+}
+
+@Keep
+@IgnoreExtraProperties
+data class AttendanceRecord(
+    @DocumentId val id: String = "",
+    val ownerId: String = "",
+    val memberUids: List<String> = emptyList(),
+    val sessionId: String = "",
+    val classId: String = "",
+    val sectionId: String = "",
+    val dateKey: String = "", // yyyy-MM-dd (Mon-Fri only; Sat/Sun off)
+    val records: Map<String, String> = emptyMap(), // studentId -> PRESENT / ABSENT / LEAVE
+    val note: String = "",
+    val markedByUid: String = "",
+    val markedByName: String = "",
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
 // Computed Domain Models for UI, PDF & Excel
